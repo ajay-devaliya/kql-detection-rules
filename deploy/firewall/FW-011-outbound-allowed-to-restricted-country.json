@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/061704ca-97a2-4111-90d7-bc4aa04c197e')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/061704ca-97a2-4111-90d7-bc4aa04c197e')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-011 Firewall - Outbound connection allowed to a restricted country",
+        "description": "Detects internal hosts making outbound connections to public IPs in a restricted country that the firewall allowed. Outbound traffic to countries the organisation has no business with can indicate malware command-and-control, data exfiltration or policy violations.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1h;\n// EXAMPLE list only. Replace with your organisation's or customer's restricted-country policy.\n// Add every spelling your data uses (run the country check in docs/data-sources.md).\nlet RestrictedCountries = dynamic([\n    \"North Korea\", \"Korea, Democratic People's Republic of\",\n    \"Iran\", \"Iran, Islamic Republic of\",\n    \"Syria\", \"Syrian Arab Republic\",\n    \"Cuba\"\n]);\n// FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow\nlet AllowedActions = dynamic([\"accept\", \"allow\", \"close\", \"timeout\", \"server-rst\", \"client-rst\"]);\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP)\n| where ipv4_is_private(SourceIP) and not(ipv4_is_private(DestinationIP))\n| where tolower(DeviceAction) in (AllowedActions)\n| extend DestinationCountry = coalesce(\n    extract(@\"FTNTFGTdstcountry=([^;]+)\", 1, AdditionalExtensions),\n    tostring(geo_info_from_ip_address(DestinationIP).country))\n| where DestinationCountry in~ (RestrictedCountries)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    SessionCount = count(),\n    DestinationIPs = make_set(DestinationIP, 25),\n    DestinationPorts = make_set(DestinationPort, 25),\n    BytesSent = sum(SentBytes),\n    BytesReceived = sum(ReceivedBytes),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationCountry, DeviceVendor\n| project StartTime, EndTime, SourceIP, DestinationCountry, SessionCount, DestinationIPs, DestinationPorts, BytesSent, BytesReceived, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CommandAndControl",
+          "Exfiltration"
+        ],
+        "techniques": [
+          "T1071",
+          "T1041"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Outbound traffic allowed from {{SourceIP}} to {{DestinationCountry}}",
+          "alertDescriptionFormat": "The firewall allowed {{SessionCount}} outbound session(s) from {{SourceIP}} to restricted country {{DestinationCountry}}."
+        },
+        "customDetails": {
+          "DestinationCountry": "DestinationCountry",
+          "SessionCount": "SessionCount",
+          "BytesSent": "BytesSent",
+          "DestinationIPs": "DestinationIPs"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

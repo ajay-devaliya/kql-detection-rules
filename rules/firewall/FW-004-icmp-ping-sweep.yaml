@@ -1,0 +1,79 @@
+id: ac12fea0-3725-4b69-b3fd-c8794a8f3ac3
+name: Firewall - ICMP ping sweep (host discovery)
+description: |
+  Detects one source IP sending ICMP traffic to 20 or more different destination hosts within one hour. A ping sweep is usually the first step of network discovery, used to find which hosts are alive before port scanning them.
+severity: Low
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: Fortinet
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Reconnaissance
+- Discovery
+relevantTechniques:
+- T1595
+- T1018
+- T1595.001
+query: |
+  let lookback = 1h;
+  let HostThreshold = 20;
+  let ExcludedSources = dynamic([]);   // monitoring tools (PRTG, Zabbix, Nagios, SolarWinds)
+  CommonSecurityLog
+  | where TimeGenerated > ago(lookback)
+  | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+  | where Protocol in~ ("icmp", "1") or ApplicationProtocol =~ "icmp" or DestinationServiceName in~ ("PING", "ALL_ICMP", "icmp", "ping")
+  | where isnotempty(SourceIP) and isnotempty(DestinationIP)
+  | where SourceIP !in (ExcludedSources)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      DistinctHosts = dcount(DestinationIP),
+      SampleHosts = make_set(DestinationIP, 50),
+      Actions = make_set(DeviceAction, 10),
+      TotalEvents = count(),
+      FirewallName = take_any(DeviceName)
+      by SourceIP, DeviceVendor
+  | where DistinctHosts >= HostThreshold
+  | extend Direction = iff(ipv4_is_private(SourceIP), "From internal host", "From external host")
+  | project StartTime, EndTime, SourceIP, Direction, DistinctHosts, SampleHosts, Actions, TotalEvents, DeviceVendor, FirewallName
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  DistinctHosts: DistinctHosts
+  SampleHosts: SampleHosts
+  Direction: Direction
+alertDetailsOverride:
+  alertDisplayNameFormat: ICMP ping sweep from {{SourceIP}} to {{DistinctHosts}} hosts
+  alertDescriptionFormat: '{{SourceIP}} sent ICMP traffic to {{DistinctHosts}} different hosts within one hour.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

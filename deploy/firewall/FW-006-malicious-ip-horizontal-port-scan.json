@@ -1,0 +1,88 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/232ddcbb-2846-45b5-b6a1-60023318145c')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/232ddcbb-2846-45b5-b6a1-60023318145c')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-006 Firewall - Horizontal port scan from a threat-intelligence IP",
+        "description": "Detects a horizontal scan (the same port on 10 or more hosts within one hour) where the source IP is an active indicator in Microsoft Sentinel threat intelligence.",
+        "severity": "High",
+        "enabled": true,
+        "query": "let dt_lookBack = 1h;\nlet ioc_lookBack = 14d;\nlet HostThreshold = 10;\nlet MaliciousIPs = ThreatIntelIndicators\n    | where TimeGenerated > ago(ioc_lookBack)\n    | where ObservableKey in (\"ipv4-addr:value\", \"ipv6-addr:value\", \"network-traffic:src_ref.value\", \"network-traffic:dst_ref.value\")\n    | summarize arg_max(TimeGenerated, *) by Id\n    | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())\n    | extend TI_Description = tostring(Data.description)\n    | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue\n    | project TI_IP, TI_Confidence = Confidence, TI_Description, TI_IndicatorId = Id;\nCommonSecurityLog\n| where TimeGenerated > ago(dt_lookBack)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n| where not(Protocol in~ (\"icmp\", \"1\"))\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctHosts = dcount(DestinationIP),\n    SampleHosts = make_set(DestinationIP, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationPort, DeviceVendor\n| where DistinctHosts >= HostThreshold\n| join kind=inner MaliciousIPs on $left.SourceIP == $right.TI_IP\n| project StartTime, EndTime, SourceIP, DestinationPort, DistinctHosts, SampleHosts, Actions, TotalEvents, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Known malicious IP {{SourceIP}} swept port {{DestinationPort}}",
+          "alertDescriptionFormat": "Threat-intel IP {{SourceIP}} connected to port {{DestinationPort}} on {{DistinctHosts}} hosts within one hour."
+        },
+        "customDetails": {
+          "DestinationPort": "DestinationPort",
+          "DistinctHosts": "DistinctHosts",
+          "TIConfidence": "TI_Confidence",
+          "TIDescription": "TI_Description"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

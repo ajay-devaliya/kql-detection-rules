@@ -1,0 +1,90 @@
+id: 061704ca-97a2-4111-90d7-bc4aa04c197e
+name: Firewall - Outbound connection allowed to a restricted country
+description: |
+  Detects internal hosts making outbound connections to public IPs in a restricted country that the firewall allowed. Outbound traffic to countries the organisation has no business with can indicate malware command-and-control, data exfiltration or policy violations.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: Fortinet
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CommandAndControl
+- Exfiltration
+relevantTechniques:
+- T1071
+- T1041
+query: |
+  let lookback = 1h;
+  // EXAMPLE list only. Replace with your organisation's or customer's restricted-country policy.
+  // Add every spelling your data uses (run the country check in docs/data-sources.md).
+  let RestrictedCountries = dynamic([
+      "North Korea", "Korea, Democratic People's Republic of",
+      "Iran", "Iran, Islamic Republic of",
+      "Syria", "Syrian Arab Republic",
+      "Cuba"
+  ]);
+  // FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow
+  let AllowedActions = dynamic(["accept", "allow", "close", "timeout", "server-rst", "client-rst"]);
+  CommonSecurityLog
+  | where TimeGenerated > ago(lookback)
+  | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+  | where isnotempty(SourceIP) and isnotempty(DestinationIP)
+  | where ipv4_is_private(SourceIP) and not(ipv4_is_private(DestinationIP))
+  | where tolower(DeviceAction) in (AllowedActions)
+  | extend DestinationCountry = coalesce(
+      extract(@"FTNTFGTdstcountry=([^;]+)", 1, AdditionalExtensions),
+      tostring(geo_info_from_ip_address(DestinationIP).country))
+  | where DestinationCountry in~ (RestrictedCountries)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      SessionCount = count(),
+      DestinationIPs = make_set(DestinationIP, 25),
+      DestinationPorts = make_set(DestinationPort, 25),
+      BytesSent = sum(SentBytes),
+      BytesReceived = sum(ReceivedBytes),
+      FirewallName = take_any(DeviceName)
+      by SourceIP, DestinationCountry, DeviceVendor
+  | project StartTime, EndTime, SourceIP, DestinationCountry, SessionCount, DestinationIPs, DestinationPorts, BytesSent, BytesReceived, DeviceVendor, FirewallName
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  DestinationCountry: DestinationCountry
+  SessionCount: SessionCount
+  BytesSent: BytesSent
+  DestinationIPs: DestinationIPs
+alertDetailsOverride:
+  alertDisplayNameFormat: Outbound traffic allowed from {{SourceIP}} to {{DestinationCountry}}
+  alertDescriptionFormat: The firewall allowed {{SessionCount}} outbound session(s) from {{SourceIP}} to restricted country {{DestinationCountry}}.
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

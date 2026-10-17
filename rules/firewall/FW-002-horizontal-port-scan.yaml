@@ -1,0 +1,81 @@
+id: 0703a0cc-66f5-4445-a06b-7dbccd67ae05
+name: Firewall - Horizontal port scan (one source, one port across many hosts)
+description: |
+  Detects one source IP connecting to the same destination port on 20 or more different hosts within one hour. This is a horizontal scan (a port sweep), typically used to find every machine running a particular service, such as SMB (445), RDP (3389) or SSH (22).
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: Fortinet
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Reconnaissance
+- Discovery
+relevantTechniques:
+- T1595
+- T1046
+- T1595.001
+query: |
+  let lookback = 1h;
+  let HostThreshold = 20;                  // distinct destination hosts on the same port
+  let ExcludedSources = dynamic([]);       // approved scanners, monitoring servers, domain controllers
+  let ExcludedPorts = dynamic([53, 123]);  // DNS and NTP fan out by design; adjust to your network
+  CommonSecurityLog
+  | where TimeGenerated > ago(lookback)
+  | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+  | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)
+  | where not(Protocol in~ ("icmp", "1"))
+  | where SourceIP !in (ExcludedSources) and DestinationPort !in (ExcludedPorts)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      DistinctHosts = dcount(DestinationIP),
+      SampleHosts = make_set(DestinationIP, 50),
+      Actions = make_set(DeviceAction, 10),
+      TotalEvents = count(),
+      FirewallName = take_any(DeviceName)
+      by SourceIP, DestinationPort, DeviceVendor
+  | where DistinctHosts >= HostThreshold
+  | extend Direction = iff(ipv4_is_private(SourceIP), "From internal host", "From external host")
+  | project StartTime, EndTime, SourceIP, DestinationPort, Direction, DistinctHosts, SampleHosts, Actions, TotalEvents, DeviceVendor, FirewallName
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  DestinationPort: DestinationPort
+  DistinctHosts: DistinctHosts
+  SampleHosts: SampleHosts
+  Direction: Direction
+alertDetailsOverride:
+  alertDisplayNameFormat: Horizontal port scan from {{SourceIP}} on port {{DestinationPort}}
+  alertDescriptionFormat: '{{SourceIP}} connected to port {{DestinationPort}} on {{DistinctHosts}} different hosts within one hour.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/108b40d9-d607-45ef-bf5d-fe2e4ddcb6df')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/108b40d9-d607-45ef-bf5d-fe2e4ddcb6df')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-003 Firewall - Slow port scan over 24 hours",
+        "description": "Detects a low-and-slow scan: one source IP touching 50 or more different host:port targets over 24 hours, spread across at least 6 separate hours, while never exceeding 20 targets in any single hour. Attackers scan slowly to stay under the one-hour thresholds used by FW-001 and FW-002; this rule catches what those miss.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1d;\nlet MinTotalTargets = 50;     // distinct host:port pairs over the whole day\nlet MinActiveHours = 6;       // the activity must be spread out\nlet MaxTargetsPerHour = 20;   // above this, the fast-scan rules (FW-001/FW-002) already fire\nlet ExcludedSources = dynamic([]);\nlet Base = materialize(\nCommonSecurityLog\n    | where TimeGenerated > ago(lookback)\n    | where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n    | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n    | where not(Protocol in~ (\"icmp\", \"1\"))\n    | where SourceIP !in (ExcludedSources)\n    | extend Target = strcat(DestinationIP, \":\", tostring(DestinationPort))\n    | project TimeGenerated, SourceIP, DestinationIP, DestinationPort, Target, DeviceAction, DeviceVendor, DeviceName);\nlet HourlyProfile = Base\n    | summarize TargetsThisHour = dcount(Target) by SourceIP, Hour = bin(TimeGenerated, 1h)\n    | summarize ActiveHours = count(), MaxTargetsInOneHour = max(TargetsThisHour) by SourceIP;\nBase\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    TotalTargets = dcount(Target),\n    DistinctHosts = dcount(DestinationIP),\n    DistinctPorts = dcount(DestinationPort),\n    SampleTargets = make_set(Target, 50),\n    Actions = make_set(DeviceAction, 10),\n    DeviceVendor = take_any(DeviceVendor),\n    FirewallName = take_any(DeviceName)\n    by SourceIP\n| where TotalTargets >= MinTotalTargets\n| join kind=inner HourlyProfile on SourceIP\n| where ActiveHours >= MinActiveHours and MaxTargetsInOneHour < MaxTargetsPerHour\n| project StartTime, EndTime, SourceIP, TotalTargets, DistinctHosts, DistinctPorts, ActiveHours, MaxTargetsInOneHour, SampleTargets, Actions, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Slow port scan from {{SourceIP}} over 24 hours",
+          "alertDescriptionFormat": "{{SourceIP}} reached {{TotalTargets}} different host:port targets spread over {{ActiveHours}} hours."
+        },
+        "customDetails": {
+          "TotalTargets": "TotalTargets",
+          "ActiveHours": "ActiveHours",
+          "MaxTargetsInOneHour": "MaxTargetsInOneHour",
+          "SampleTargets": "SampleTargets"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

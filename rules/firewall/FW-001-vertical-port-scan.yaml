@@ -1,0 +1,88 @@
+id: 54f4a3f4-9ecb-4b9f-80c0-cabfd0085279
+name: Firewall - Vertical port scan (one source, many ports on one host)
+description: |
+  Detects one source IP connecting to 25 or more different destination ports on a single destination host within one hour, as seen by FortiGate or Palo Alto firewalls. This is the pattern of a vertical port scan, where an attacker probes one machine to find which services are open. Denied and allowed connections are both counted, because most scan traffic is blocked.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: Fortinet
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Reconnaissance
+- Discovery
+relevantTechniques:
+- T1595
+- T1046
+- T1595.001
+query: |
+  let lookback = 1h;
+  let PortThreshold = 25;                  // distinct destination ports from one source to one host
+  let ExcludedSources = dynamic([]);       // approved scanners, e.g. vulnerability scanner IPs
+  CommonSecurityLog
+  | where TimeGenerated > ago(lookback)
+  | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+  | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)
+  | where not(Protocol in~ ("icmp", "1"))
+  | where SourceIP !in (ExcludedSources)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      DistinctPorts = dcount(DestinationPort),
+      SamplePorts = make_set(DestinationPort, 50),
+      Actions = make_set(DeviceAction, 10),
+      TotalEvents = count(),
+      FirewallName = take_any(DeviceName)
+      by SourceIP, DestinationIP, DeviceVendor
+  | where DistinctPorts >= PortThreshold
+  | extend Direction = case(
+      ipv4_is_private(SourceIP) and ipv4_is_private(DestinationIP), "Internal",
+      ipv4_is_private(SourceIP), "Outbound",
+      ipv4_is_private(DestinationIP), "Inbound",
+      "External")
+  | project StartTime, EndTime, SourceIP, DestinationIP, Direction, DistinctPorts, SamplePorts, Actions, TotalEvents, DeviceVendor, FirewallName
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: DestinationIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  DistinctPorts: DistinctPorts
+  SamplePorts: SamplePorts
+  Direction: Direction
+  FirewallActions: Actions
+alertDetailsOverride:
+  alertDisplayNameFormat: Vertical port scan from {{SourceIP}} to {{DestinationIP}}
+  alertDescriptionFormat: '{{SourceIP}} probed {{DistinctPorts}} different ports on {{DestinationIP}} within one hour.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

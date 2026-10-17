@@ -1,0 +1,37 @@
+// FW-011 | Firewall - Outbound connection allowed to a restricted country
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CommandAndControl, Exfiltration | T1071, T1041
+// Table(s): CommonSecurityLog
+
+let lookback = 1h;
+// EXAMPLE list only. Replace with your organisation's or customer's restricted-country policy.
+// Add every spelling your data uses (run the country check in docs/data-sources.md).
+let RestrictedCountries = dynamic([
+    "North Korea", "Korea, Democratic People's Republic of",
+    "Iran", "Iran, Islamic Republic of",
+    "Syria", "Syrian Arab Republic",
+    "Cuba"
+]);
+// FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow
+let AllowedActions = dynamic(["accept", "allow", "close", "timeout", "server-rst", "client-rst"]);
+CommonSecurityLog
+| where TimeGenerated > ago(lookback)
+| where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+| where isnotempty(SourceIP) and isnotempty(DestinationIP)
+| where ipv4_is_private(SourceIP) and not(ipv4_is_private(DestinationIP))
+| where tolower(DeviceAction) in (AllowedActions)
+| extend DestinationCountry = coalesce(
+    extract(@"FTNTFGTdstcountry=([^;]+)", 1, AdditionalExtensions),
+    tostring(geo_info_from_ip_address(DestinationIP).country))
+| where DestinationCountry in~ (RestrictedCountries)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    SessionCount = count(),
+    DestinationIPs = make_set(DestinationIP, 25),
+    DestinationPorts = make_set(DestinationPort, 25),
+    BytesSent = sum(SentBytes),
+    BytesReceived = sum(ReceivedBytes),
+    FirewallName = take_any(DeviceName)
+    by SourceIP, DestinationCountry, DeviceVendor
+| project StartTime, EndTime, SourceIP, DestinationCountry, SessionCount, DestinationIPs, DestinationPorts, BytesSent, BytesReceived, DeviceVendor, FirewallName

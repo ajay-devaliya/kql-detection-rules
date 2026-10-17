@@ -1,0 +1,96 @@
+id: 232ddcbb-2846-45b5-b6a1-60023318145c
+name: Firewall - Horizontal port scan from a threat-intelligence IP
+description: |
+  Detects a horizontal scan (the same port on 10 or more hosts within one hour) where the source IP is an active indicator in Microsoft Sentinel threat intelligence.
+severity: High
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: Fortinet
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: ThreatIntelligence
+  dataTypes:
+  - ThreatIntelIndicators
+- connectorId: ThreatIntelligenceTaxii
+  dataTypes:
+  - ThreatIntelIndicators
+- connectorId: MicrosoftDefenderThreatIntelligence
+  dataTypes:
+  - ThreatIntelIndicators
+queryFrequency: 1h
+queryPeriod: 14d
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Reconnaissance
+- Discovery
+relevantTechniques:
+- T1595
+- T1046
+- T1595.001
+query: |
+  let dt_lookBack = 1h;
+  let ioc_lookBack = 14d;
+  let HostThreshold = 10;
+  let MaliciousIPs = ThreatIntelIndicators
+      | where TimeGenerated > ago(ioc_lookBack)
+      | where ObservableKey in ("ipv4-addr:value", "ipv6-addr:value", "network-traffic:src_ref.value", "network-traffic:dst_ref.value")
+      | summarize arg_max(TimeGenerated, *) by Id
+      | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())
+      | extend TI_Description = tostring(Data.description)
+      | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue
+      | project TI_IP, TI_Confidence = Confidence, TI_Description, TI_IndicatorId = Id;
+  CommonSecurityLog
+  | where TimeGenerated > ago(dt_lookBack)
+  | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+  | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)
+  | where not(Protocol in~ ("icmp", "1"))
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      DistinctHosts = dcount(DestinationIP),
+      SampleHosts = make_set(DestinationIP, 50),
+      Actions = make_set(DeviceAction, 10),
+      TotalEvents = count(),
+      FirewallName = take_any(DeviceName)
+      by SourceIP, DestinationPort, DeviceVendor
+  | where DistinctHosts >= HostThreshold
+  | join kind=inner MaliciousIPs on $left.SourceIP == $right.TI_IP
+  | project StartTime, EndTime, SourceIP, DestinationPort, DistinctHosts, SampleHosts, Actions, TotalEvents, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor, FirewallName
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  DestinationPort: DestinationPort
+  DistinctHosts: DistinctHosts
+  TIConfidence: TI_Confidence
+  TIDescription: TI_Description
+alertDetailsOverride:
+  alertDisplayNameFormat: Known malicious IP {{SourceIP}} swept port {{DestinationPort}}
+  alertDescriptionFormat: Threat-intel IP {{SourceIP}} connected to port {{DestinationPort}} on {{DistinctHosts}} hosts within one hour.
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

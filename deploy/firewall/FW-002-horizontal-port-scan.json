@@ -1,0 +1,88 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/0703a0cc-66f5-4445-a06b-7dbccd67ae05')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/0703a0cc-66f5-4445-a06b-7dbccd67ae05')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-002 Firewall - Horizontal port scan (one source, one port across many hosts)",
+        "description": "Detects one source IP connecting to the same destination port on 20 or more different hosts within one hour. This is a horizontal scan (a port sweep), typically used to find every machine running a particular service, such as SMB (445), RDP (3389) or SSH (22).",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1h;\nlet HostThreshold = 20;                  // distinct destination hosts on the same port\nlet ExcludedSources = dynamic([]);       // approved scanners, monitoring servers, domain controllers\nlet ExcludedPorts = dynamic([53, 123]);  // DNS and NTP fan out by design; adjust to your network\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n| where not(Protocol in~ (\"icmp\", \"1\"))\n| where SourceIP !in (ExcludedSources) and DestinationPort !in (ExcludedPorts)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctHosts = dcount(DestinationIP),\n    SampleHosts = make_set(DestinationIP, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationPort, DeviceVendor\n| where DistinctHosts >= HostThreshold\n| extend Direction = iff(ipv4_is_private(SourceIP), \"From internal host\", \"From external host\")\n| project StartTime, EndTime, SourceIP, DestinationPort, Direction, DistinctHosts, SampleHosts, Actions, TotalEvents, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Horizontal port scan from {{SourceIP}} on port {{DestinationPort}}",
+          "alertDescriptionFormat": "{{SourceIP}} connected to port {{DestinationPort}} on {{DistinctHosts}} different hosts within one hour."
+        },
+        "customDetails": {
+          "DestinationPort": "DestinationPort",
+          "DistinctHosts": "DistinctHosts",
+          "SampleHosts": "SampleHosts",
+          "Direction": "Direction"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

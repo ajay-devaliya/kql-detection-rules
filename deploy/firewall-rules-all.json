@@ -1,0 +1,899 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/54f4a3f4-9ecb-4b9f-80c0-cabfd0085279')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/54f4a3f4-9ecb-4b9f-80c0-cabfd0085279')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-001 Firewall - Vertical port scan (one source, many ports on one host)",
+        "description": "Detects one source IP connecting to 25 or more different destination ports on a single destination host within one hour, as seen by FortiGate or Palo Alto firewalls. This is the pattern of a vertical port scan, where an attacker probes one machine to find which services are open. Denied and allowed connections are both counted, because most scan traffic is blocked.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1h;\nlet PortThreshold = 25;                  // distinct destination ports from one source to one host\nlet ExcludedSources = dynamic([]);       // approved scanners, e.g. vulnerability scanner IPs\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n| where not(Protocol in~ (\"icmp\", \"1\"))\n| where SourceIP !in (ExcludedSources)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctPorts = dcount(DestinationPort),\n    SamplePorts = make_set(DestinationPort, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationIP, DeviceVendor\n| where DistinctPorts >= PortThreshold\n| extend Direction = case(\n    ipv4_is_private(SourceIP) and ipv4_is_private(DestinationIP), \"Internal\",\n    ipv4_is_private(SourceIP), \"Outbound\",\n    ipv4_is_private(DestinationIP), \"Inbound\",\n    \"External\")\n| project StartTime, EndTime, SourceIP, DestinationIP, Direction, DistinctPorts, SamplePorts, Actions, TotalEvents, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Vertical port scan from {{SourceIP}} to {{DestinationIP}}",
+          "alertDescriptionFormat": "{{SourceIP}} probed {{DistinctPorts}} different ports on {{DestinationIP}} within one hour."
+        },
+        "customDetails": {
+          "DistinctPorts": "DistinctPorts",
+          "SamplePorts": "SamplePorts",
+          "Direction": "Direction",
+          "FirewallActions": "Actions"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "DestinationIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/0703a0cc-66f5-4445-a06b-7dbccd67ae05')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/0703a0cc-66f5-4445-a06b-7dbccd67ae05')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-002 Firewall - Horizontal port scan (one source, one port across many hosts)",
+        "description": "Detects one source IP connecting to the same destination port on 20 or more different hosts within one hour. This is a horizontal scan (a port sweep), typically used to find every machine running a particular service, such as SMB (445), RDP (3389) or SSH (22).",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1h;\nlet HostThreshold = 20;                  // distinct destination hosts on the same port\nlet ExcludedSources = dynamic([]);       // approved scanners, monitoring servers, domain controllers\nlet ExcludedPorts = dynamic([53, 123]);  // DNS and NTP fan out by design; adjust to your network\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n| where not(Protocol in~ (\"icmp\", \"1\"))\n| where SourceIP !in (ExcludedSources) and DestinationPort !in (ExcludedPorts)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctHosts = dcount(DestinationIP),\n    SampleHosts = make_set(DestinationIP, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationPort, DeviceVendor\n| where DistinctHosts >= HostThreshold\n| extend Direction = iff(ipv4_is_private(SourceIP), \"From internal host\", \"From external host\")\n| project StartTime, EndTime, SourceIP, DestinationPort, Direction, DistinctHosts, SampleHosts, Actions, TotalEvents, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Horizontal port scan from {{SourceIP}} on port {{DestinationPort}}",
+          "alertDescriptionFormat": "{{SourceIP}} connected to port {{DestinationPort}} on {{DistinctHosts}} different hosts within one hour."
+        },
+        "customDetails": {
+          "DestinationPort": "DestinationPort",
+          "DistinctHosts": "DistinctHosts",
+          "SampleHosts": "SampleHosts",
+          "Direction": "Direction"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/108b40d9-d607-45ef-bf5d-fe2e4ddcb6df')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/108b40d9-d607-45ef-bf5d-fe2e4ddcb6df')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-003 Firewall - Slow port scan over 24 hours",
+        "description": "Detects a low-and-slow scan: one source IP touching 50 or more different host:port targets over 24 hours, spread across at least 6 separate hours, while never exceeding 20 targets in any single hour. Attackers scan slowly to stay under the one-hour thresholds used by FW-001 and FW-002; this rule catches what those miss.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1d;\nlet MinTotalTargets = 50;     // distinct host:port pairs over the whole day\nlet MinActiveHours = 6;       // the activity must be spread out\nlet MaxTargetsPerHour = 20;   // above this, the fast-scan rules (FW-001/FW-002) already fire\nlet ExcludedSources = dynamic([]);\nlet Base = materialize(\nCommonSecurityLog\n    | where TimeGenerated > ago(lookback)\n    | where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n    | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n    | where not(Protocol in~ (\"icmp\", \"1\"))\n    | where SourceIP !in (ExcludedSources)\n    | extend Target = strcat(DestinationIP, \":\", tostring(DestinationPort))\n    | project TimeGenerated, SourceIP, DestinationIP, DestinationPort, Target, DeviceAction, DeviceVendor, DeviceName);\nlet HourlyProfile = Base\n    | summarize TargetsThisHour = dcount(Target) by SourceIP, Hour = bin(TimeGenerated, 1h)\n    | summarize ActiveHours = count(), MaxTargetsInOneHour = max(TargetsThisHour) by SourceIP;\nBase\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    TotalTargets = dcount(Target),\n    DistinctHosts = dcount(DestinationIP),\n    DistinctPorts = dcount(DestinationPort),\n    SampleTargets = make_set(Target, 50),\n    Actions = make_set(DeviceAction, 10),\n    DeviceVendor = take_any(DeviceVendor),\n    FirewallName = take_any(DeviceName)\n    by SourceIP\n| where TotalTargets >= MinTotalTargets\n| join kind=inner HourlyProfile on SourceIP\n| where ActiveHours >= MinActiveHours and MaxTargetsInOneHour < MaxTargetsPerHour\n| project StartTime, EndTime, SourceIP, TotalTargets, DistinctHosts, DistinctPorts, ActiveHours, MaxTargetsInOneHour, SampleTargets, Actions, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P1D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Slow port scan from {{SourceIP}} over 24 hours",
+          "alertDescriptionFormat": "{{SourceIP}} reached {{TotalTargets}} different host:port targets spread over {{ActiveHours}} hours."
+        },
+        "customDetails": {
+          "TotalTargets": "TotalTargets",
+          "ActiveHours": "ActiveHours",
+          "MaxTargetsInOneHour": "MaxTargetsInOneHour",
+          "SampleTargets": "SampleTargets"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/ac12fea0-3725-4b69-b3fd-c8794a8f3ac3')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/ac12fea0-3725-4b69-b3fd-c8794a8f3ac3')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-004 Firewall - ICMP ping sweep (host discovery)",
+        "description": "Detects one source IP sending ICMP traffic to 20 or more different destination hosts within one hour. A ping sweep is usually the first step of network discovery, used to find which hosts are alive before port scanning them.",
+        "severity": "Low",
+        "enabled": true,
+        "query": "let lookback = 1h;\nlet HostThreshold = 20;\nlet ExcludedSources = dynamic([]);   // monitoring tools (PRTG, Zabbix, Nagios, SolarWinds)\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where Protocol in~ (\"icmp\", \"1\") or ApplicationProtocol =~ \"icmp\" or DestinationServiceName in~ (\"PING\", \"ALL_ICMP\", \"icmp\", \"ping\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP)\n| where SourceIP !in (ExcludedSources)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctHosts = dcount(DestinationIP),\n    SampleHosts = make_set(DestinationIP, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DeviceVendor\n| where DistinctHosts >= HostThreshold\n| extend Direction = iff(ipv4_is_private(SourceIP), \"From internal host\", \"From external host\")\n| project StartTime, EndTime, SourceIP, Direction, DistinctHosts, SampleHosts, Actions, TotalEvents, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1018"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "ICMP ping sweep from {{SourceIP}} to {{DistinctHosts}} hosts",
+          "alertDescriptionFormat": "{{SourceIP}} sent ICMP traffic to {{DistinctHosts}} different hosts within one hour."
+        },
+        "customDetails": {
+          "DistinctHosts": "DistinctHosts",
+          "SampleHosts": "SampleHosts",
+          "Direction": "Direction"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/c82a3eec-ee11-4b2d-b0d7-58478dc35704')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/c82a3eec-ee11-4b2d-b0d7-58478dc35704')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-005 Firewall - Vertical port scan from a threat-intelligence IP",
+        "description": "Detects a vertical port scan (10 or more ports on one host within one hour) where the source IP is an active indicator in Microsoft Sentinel threat intelligence. The threshold is lower than FW-001 because the source is already known to be malicious.",
+        "severity": "High",
+        "enabled": true,
+        "query": "let dt_lookBack = 1h;       // firewall data window\nlet ioc_lookBack = 14d;     // threat-intel window\nlet PortThreshold = 10;\nlet MaliciousIPs = ThreatIntelIndicators\n    | where TimeGenerated > ago(ioc_lookBack)\n    | where ObservableKey in (\"ipv4-addr:value\", \"ipv6-addr:value\", \"network-traffic:src_ref.value\", \"network-traffic:dst_ref.value\")\n    | summarize arg_max(TimeGenerated, *) by Id\n    | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())\n    | extend TI_Description = tostring(Data.description)\n    | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue\n    | project TI_IP, TI_Confidence = Confidence, TI_Description, TI_IndicatorId = Id;\nCommonSecurityLog\n| where TimeGenerated > ago(dt_lookBack)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n| where not(Protocol in~ (\"icmp\", \"1\"))\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctPorts = dcount(DestinationPort),\n    SamplePorts = make_set(DestinationPort, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationIP, DeviceVendor\n| where DistinctPorts >= PortThreshold\n| join kind=inner MaliciousIPs on $left.SourceIP == $right.TI_IP\n| project StartTime, EndTime, SourceIP, DestinationIP, DistinctPorts, SamplePorts, Actions, TotalEvents, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Known malicious IP {{SourceIP}} port-scanned {{DestinationIP}}",
+          "alertDescriptionFormat": "Threat-intel IP {{SourceIP}} probed {{DistinctPorts}} ports on {{DestinationIP}} within one hour."
+        },
+        "customDetails": {
+          "DistinctPorts": "DistinctPorts",
+          "SamplePorts": "SamplePorts",
+          "TIConfidence": "TI_Confidence",
+          "TIDescription": "TI_Description"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "DestinationIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/232ddcbb-2846-45b5-b6a1-60023318145c')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/232ddcbb-2846-45b5-b6a1-60023318145c')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-006 Firewall - Horizontal port scan from a threat-intelligence IP",
+        "description": "Detects a horizontal scan (the same port on 10 or more hosts within one hour) where the source IP is an active indicator in Microsoft Sentinel threat intelligence.",
+        "severity": "High",
+        "enabled": true,
+        "query": "let dt_lookBack = 1h;\nlet ioc_lookBack = 14d;\nlet HostThreshold = 10;\nlet MaliciousIPs = ThreatIntelIndicators\n    | where TimeGenerated > ago(ioc_lookBack)\n    | where ObservableKey in (\"ipv4-addr:value\", \"ipv6-addr:value\", \"network-traffic:src_ref.value\", \"network-traffic:dst_ref.value\")\n    | summarize arg_max(TimeGenerated, *) by Id\n    | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())\n    | extend TI_Description = tostring(Data.description)\n    | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue\n    | project TI_IP, TI_Confidence = Confidence, TI_Description, TI_IndicatorId = Id;\nCommonSecurityLog\n| where TimeGenerated > ago(dt_lookBack)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)\n| where not(Protocol in~ (\"icmp\", \"1\"))\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    DistinctHosts = dcount(DestinationIP),\n    SampleHosts = make_set(DestinationIP, 50),\n    Actions = make_set(DeviceAction, 10),\n    TotalEvents = count(),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationPort, DeviceVendor\n| where DistinctHosts >= HostThreshold\n| join kind=inner MaliciousIPs on $left.SourceIP == $right.TI_IP\n| project StartTime, EndTime, SourceIP, DestinationPort, DistinctHosts, SampleHosts, Actions, TotalEvents, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "Reconnaissance",
+          "Discovery"
+        ],
+        "techniques": [
+          "T1595",
+          "T1046"
+        ],
+        "subTechniques": [
+          "T1595.001"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Known malicious IP {{SourceIP}} swept port {{DestinationPort}}",
+          "alertDescriptionFormat": "Threat-intel IP {{SourceIP}} connected to port {{DestinationPort}} on {{DistinctHosts}} hosts within one hour."
+        },
+        "customDetails": {
+          "DestinationPort": "DestinationPort",
+          "DistinctHosts": "DistinctHosts",
+          "TIConfidence": "TI_Confidence",
+          "TIDescription": "TI_Description"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/ae374c52-9d0d-4788-b827-12af04823285')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/ae374c52-9d0d-4788-b827-12af04823285')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-007 FortiGate - Configuration change by administrator",
+        "description": "Detects configuration changes on FortiGate firewalls using FortiOS configuration log IDs (32102, 32104, 44544-44547, 32565, 32566). Each alert shows who made the change, from where (GUI or CLI, source IP), and what was changed (configuration path, object and attributes). Changes to high-risk areas such as firewall policies, admin accounts, VPN and logging settings are flagged.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 15m;\n// FortiOS log IDs for configuration activity (CEF carries the last 5 digits, e.g. 0100044546 -> 44546)\nlet ConfigLogIds = dynamic([\"32102\", \"32104\", \"44544\", \"44545\", \"44546\", \"44547\", \"32565\", \"32566\"]);\n// Paths where a change deserves extra attention\nlet HighRiskPaths = dynamic([\"firewall.policy\", \"system.admin\", \"user.local\", \"user.group\", \"vpn.\", \"log.\", \"system.interface\", \"router.\", \"system.global\", \"firewall.address\", \"system.api-user\"]);\nlet ApprovedAdmins = dynamic([]);   // optional: change-managed service accounts to exclude\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor == \"Fortinet\" and DeviceProduct startswith \"Fortigate\"\n| extend LogId = iff(strlen(DeviceEventClassID) > 5, substring(DeviceEventClassID, strlen(DeviceEventClassID) - 5), DeviceEventClassID)\n| where LogId in (ConfigLogIds)\n| extend\n    AdminUser = coalesce(DestinationUserName, SourceUserName, extract(@\"FTNTFGTuser=([^;]+)\", 1, AdditionalExtensions)),\n    AccessMethod = extract(@\"FTNTFGTui=([^;]+)\", 1, AdditionalExtensions),\n    ConfigPath = extract(@\"FTNTFGTcfgpath=([^;]+)\", 1, AdditionalExtensions),\n    ConfigObject = extract(@\"FTNTFGTcfgobj=([^;]+)\", 1, AdditionalExtensions),\n    ConfigAttributes = extract(@\"FTNTFGTcfgattr=([^;]+)\", 1, AdditionalExtensions)\n| extend AdminSourceIP = coalesce(SourceIP, extract(@\"(\\d{1,3}(?:\\.\\d{1,3}){3})\", 1, AccessMethod))\n| where AdminUser !in (ApprovedAdmins)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    ChangeCount = count(),\n    ConfigPaths = make_set(ConfigPath, 25),\n    ChangedObjects = make_set(ConfigObject, 25),\n    ChangedAttributes = make_set(ConfigAttributes, 25),\n    LogIds = make_set(LogId, 10),\n    Messages = make_set(Message, 10)\n    by FirewallName = DeviceName, AdminUser, AdminSourceIP, AccessMethod\n| extend HighRiskChange = iff(tostring(ConfigPaths) has_any (HighRiskPaths), \"Yes\", \"No\")\n| project StartTime, EndTime, FirewallName, AdminUser, AdminSourceIP, AccessMethod, ChangeCount, HighRiskChange, ConfigPaths, ChangedObjects, ChangedAttributes, LogIds, Messages",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion",
+          "Persistence"
+        ],
+        "techniques": [
+          "T1562",
+          "T1098"
+        ],
+        "subTechniques": [
+          "T1562.004"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "FortiGate {{FirewallName}} configuration changed by {{AdminUser}}",
+          "alertDescriptionFormat": "{{AdminUser}} made {{ChangeCount}} configuration change(s) on {{FirewallName}}. High-risk area changed: {{HighRiskChange}}."
+        },
+        "customDetails": {
+          "AdminUser": "AdminUser",
+          "AccessMethod": "AccessMethod",
+          "ChangeCount": "ChangeCount",
+          "HighRiskChange": "HighRiskChange",
+          "ConfigPaths": "ConfigPaths"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AdminUser"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "AdminSourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/32ce7ef5-9953-4b3f-abd5-8dfc33d659a8')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/32ce7ef5-9953-4b3f-abd5-8dfc33d659a8')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-008 Palo Alto - Configuration change or commit by administrator",
+        "description": "Detects configuration changes on Palo Alto Networks firewalls (PAN-OS CONFIG logs): add, delete, edit, set, move, rename, clone and commit commands. Each alert shows the administrator, the client used (Web or CLI), the configuration path and the result. Changes to security rules, admin accounts, NAT, VPN and log forwarding are flagged as high risk.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 15m;\nlet HighRiskPaths = dynamic([\"rulebase\", \"security\", \"nat\", \"mgt-config\", \"users\", \"admin\", \"log-settings\", \"network\", \"vpn\", \"ipsec\", \"global-protect\", \"zone\"]);\nlet ApprovedAdmins = dynamic([]);   // optional: Panorama or automation accounts under change management\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor == \"Palo Alto Networks\" and DeviceProduct == \"PAN-OS\"\n| where Activity =~ \"CONFIG\" or DeviceEventClassID =~ \"CONFIG\"\n// Default PAN-OS CEF config format: act=$cmd duser=$admin destinationServiceName=$client msg=$path, result in the CEF header\n| extend\n    Command = DeviceAction,\n    AdminUser = coalesce(DestinationUserName, SourceUserName),\n    Client = DestinationServiceName,\n    ConfigPath = Message,\n    Result = iff(Activity =~ \"CONFIG\", DeviceEventClassID, Activity),\n    BeforeChange = case(DeviceCustomString1Label has \"Before\", DeviceCustomString1, DeviceCustomString2Label has \"Before\", DeviceCustomString2, \"\"),\n    AfterChange = case(DeviceCustomString1Label has \"After\", DeviceCustomString1, DeviceCustomString2Label has \"After\", DeviceCustomString2, \"\")\n| where AdminUser !in (ApprovedAdmins)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    ChangeCount = count(),\n    Commands = make_set(Command, 20),\n    ConfigPaths = make_set(ConfigPath, 25),\n    Results = make_set(Result, 10),\n    BeforeSample = make_set(BeforeChange, 5),\n    AfterSample = make_set(AfterChange, 5)\n    by FirewallName = DeviceName, AdminUser, AdminSourceIP = SourceIP, Client\n| extend HighRiskChange = iff(tostring(ConfigPaths) has_any (HighRiskPaths), \"Yes\", \"No\")\n| extend Committed = iff(tostring(Commands) has \"commit\", \"Yes\", \"No\")\n| project StartTime, EndTime, FirewallName, AdminUser, AdminSourceIP, Client, ChangeCount, Commands, Committed, HighRiskChange, ConfigPaths, Results, BeforeSample, AfterSample",
+        "queryFrequency": "PT15M",
+        "queryPeriod": "PT15M",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "DefenseEvasion",
+          "Persistence"
+        ],
+        "techniques": [
+          "T1562",
+          "T1098"
+        ],
+        "subTechniques": [
+          "T1562.004"
+        ],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Palo Alto {{FirewallName}} configuration changed by {{AdminUser}}",
+          "alertDescriptionFormat": "{{AdminUser}} ran {{ChangeCount}} configuration command(s) on {{FirewallName}}. High-risk area changed: {{HighRiskChange}}."
+        },
+        "customDetails": {
+          "AdminUser": "AdminUser",
+          "Client": "Client",
+          "Commands": "Commands",
+          "Committed": "Committed",
+          "HighRiskChange": "HighRiskChange"
+        },
+        "entityMappings": [
+          {
+            "entityType": "Account",
+            "fieldMappings": [
+              {
+                "identifier": "Name",
+                "columnName": "AdminUser"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "AdminSourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/6195d7c8-bcc0-43d5-b978-a406d5f23356')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/6195d7c8-bcc0-43d5-b978-a406d5f23356')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-009 Firewall - Inbound connection allowed from a restricted country",
+        "description": "Detects inbound connections from public IPs located in a restricted country that the firewall allowed (FortiGate accept/close/timeout, Palo Alto allow). If your policy is to block these countries, any allowed session means a geo-blocking gap or a misconfigured rule. Country comes from the FortiGate srccountry field when present, otherwise from Sentinel's geo_info_from_ip_address().",
+        "severity": "High",
+        "enabled": true,
+        "query": "let lookback = 1h;\n// EXAMPLE list only. Replace with your organisation's or customer's restricted-country policy.\n// Add every spelling your data uses (run the country check in docs/data-sources.md).\nlet RestrictedCountries = dynamic([\n    \"North Korea\", \"Korea, Democratic People's Republic of\",\n    \"Iran\", \"Iran, Islamic Republic of\",\n    \"Syria\", \"Syrian Arab Republic\",\n    \"Cuba\"\n]);\n// FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow\nlet AllowedActions = dynamic([\"accept\", \"allow\", \"close\", \"timeout\", \"server-rst\", \"client-rst\"]);\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and not(ipv4_is_private(SourceIP))\n| where tolower(DeviceAction) in (AllowedActions)\n| extend SourceCountry = coalesce(\n    extract(@\"FTNTFGTsrccountry=([^;]+)\", 1, AdditionalExtensions),\n    tostring(geo_info_from_ip_address(SourceIP).country))\n| where SourceCountry in~ (RestrictedCountries)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    SessionCount = count(),\n    DestinationIPs = make_set(DestinationIP, 25),\n    DestinationPorts = make_set(DestinationPort, 25),\n    Actions = make_set(DeviceAction, 10),\n    BytesSent = sum(SentBytes),\n    BytesReceived = sum(ReceivedBytes),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, SourceCountry, DeviceVendor\n| project StartTime, EndTime, SourceIP, SourceCountry, SessionCount, DestinationIPs, DestinationPorts, Actions, BytesSent, BytesReceived, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "InitialAccess",
+          "CommandAndControl"
+        ],
+        "techniques": [
+          "T1190",
+          "T1133"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Inbound traffic allowed from {{SourceCountry}} ({{SourceIP}})",
+          "alertDescriptionFormat": "The firewall allowed {{SessionCount}} inbound session(s) from {{SourceIP}} in restricted country {{SourceCountry}}."
+        },
+        "customDetails": {
+          "SourceCountry": "SourceCountry",
+          "SessionCount": "SessionCount",
+          "DestinationPorts": "DestinationPorts",
+          "DestinationIPs": "DestinationIPs"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/b2df3c81-ccba-487a-8ef8-79cc0c733aa4')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/b2df3c81-ccba-487a-8ef8-79cc0c733aa4')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-010 Firewall - Outbound connection allowed to a threat-intelligence IP",
+        "description": "Detects internal hosts making outbound connections to IPs that are active indicators in Microsoft Sentinel threat intelligence, where the firewall allowed the session. This can indicate malware calling its command-and-control server or data being sent to attacker infrastructure.",
+        "severity": "High",
+        "enabled": true,
+        "query": "let dt_lookBack = 1h;\nlet ioc_lookBack = 14d;\nlet MinConfidence = 0;   // raise (for example to 50) if low-confidence indicators are noisy\n// FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow\nlet AllowedActions = dynamic([\"accept\", \"allow\", \"close\", \"timeout\", \"server-rst\", \"client-rst\"]);\nlet MaliciousIPs = ThreatIntelIndicators\n    | where TimeGenerated > ago(ioc_lookBack)\n    | where ObservableKey in (\"ipv4-addr:value\", \"ipv6-addr:value\", \"network-traffic:src_ref.value\", \"network-traffic:dst_ref.value\")\n    | summarize arg_max(TimeGenerated, *) by Id\n    | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())\n    | extend TI_Description = tostring(Data.description)\n    | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue\n    | project TI_IP, TI_Confidence = Confidence, TI_Description, TI_IndicatorId = Id;\nCommonSecurityLog\n| where TimeGenerated > ago(dt_lookBack)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP)\n| where ipv4_is_private(SourceIP) and not(ipv4_is_private(DestinationIP))\n| where tolower(DeviceAction) in (AllowedActions)\n| join kind=inner (MaliciousIPs | where TI_Confidence >= MinConfidence) on $left.DestinationIP == $right.TI_IP\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    SessionCount = count(),\n    DestinationPorts = make_set(DestinationPort, 25),\n    Applications = make_set(ApplicationProtocol, 10),\n    BytesSent = sum(SentBytes),\n    BytesReceived = sum(ReceivedBytes),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationIP, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor\n| project StartTime, EndTime, SourceIP, DestinationIP, SessionCount, DestinationPorts, Applications, BytesSent, BytesReceived, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CommandAndControl",
+          "Exfiltration"
+        ],
+        "techniques": [
+          "T1071",
+          "T1041"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Internal host {{SourceIP}} connected to malicious IP {{DestinationIP}}",
+          "alertDescriptionFormat": "The firewall allowed {{SessionCount}} outbound session(s) from {{SourceIP}} to threat-intel IP {{DestinationIP}}."
+        },
+        "customDetails": {
+          "SessionCount": "SessionCount",
+          "BytesSent": "BytesSent",
+          "DestinationPorts": "DestinationPorts",
+          "TIConfidence": "TI_Confidence",
+          "TIDescription": "TI_Description"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "DestinationIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/061704ca-97a2-4111-90d7-bc4aa04c197e')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/061704ca-97a2-4111-90d7-bc4aa04c197e')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-011 Firewall - Outbound connection allowed to a restricted country",
+        "description": "Detects internal hosts making outbound connections to public IPs in a restricted country that the firewall allowed. Outbound traffic to countries the organisation has no business with can indicate malware command-and-control, data exfiltration or policy violations.",
+        "severity": "Medium",
+        "enabled": true,
+        "query": "let lookback = 1h;\n// EXAMPLE list only. Replace with your organisation's or customer's restricted-country policy.\n// Add every spelling your data uses (run the country check in docs/data-sources.md).\nlet RestrictedCountries = dynamic([\n    \"North Korea\", \"Korea, Democratic People's Republic of\",\n    \"Iran\", \"Iran, Islamic Republic of\",\n    \"Syria\", \"Syrian Arab Republic\",\n    \"Cuba\"\n]);\n// FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow\nlet AllowedActions = dynamic([\"accept\", \"allow\", \"close\", \"timeout\", \"server-rst\", \"client-rst\"]);\nCommonSecurityLog\n| where TimeGenerated > ago(lookback)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP)\n| where ipv4_is_private(SourceIP) and not(ipv4_is_private(DestinationIP))\n| where tolower(DeviceAction) in (AllowedActions)\n| extend DestinationCountry = coalesce(\n    extract(@\"FTNTFGTdstcountry=([^;]+)\", 1, AdditionalExtensions),\n    tostring(geo_info_from_ip_address(DestinationIP).country))\n| where DestinationCountry in~ (RestrictedCountries)\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    SessionCount = count(),\n    DestinationIPs = make_set(DestinationIP, 25),\n    DestinationPorts = make_set(DestinationPort, 25),\n    BytesSent = sum(SentBytes),\n    BytesReceived = sum(ReceivedBytes),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationCountry, DeviceVendor\n| project StartTime, EndTime, SourceIP, DestinationCountry, SessionCount, DestinationIPs, DestinationPorts, BytesSent, BytesReceived, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "PT1H",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CommandAndControl",
+          "Exfiltration"
+        ],
+        "techniques": [
+          "T1071",
+          "T1041"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "PT5H",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Outbound traffic allowed from {{SourceIP}} to {{DestinationCountry}}",
+          "alertDescriptionFormat": "The firewall allowed {{SessionCount}} outbound session(s) from {{SourceIP}} to restricted country {{DestinationCountry}}."
+        },
+        "customDetails": {
+          "DestinationCountry": "DestinationCountry",
+          "SessionCount": "SessionCount",
+          "BytesSent": "BytesSent",
+          "DestinationIPs": "DestinationIPs"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

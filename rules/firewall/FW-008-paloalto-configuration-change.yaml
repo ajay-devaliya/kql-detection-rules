@@ -1,0 +1,91 @@
+id: 32ce7ef5-9953-4b3f-abd5-8dfc33d659a8
+name: Palo Alto - Configuration change or commit by administrator
+description: |
+  Detects configuration changes on Palo Alto Networks firewalls (PAN-OS CONFIG logs): add, delete, edit, set, move, rename, clone and commit commands. Each alert shows the administrator, the client used (Web or CLI), the configuration path and the result. Changes to security rules, admin accounts, NAT, VPN and log forwarding are flagged as high risk.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- DefenseEvasion
+- Persistence
+relevantTechniques:
+- T1562
+- T1098
+- T1562.004
+query: |
+  let lookback = 15m;
+  let HighRiskPaths = dynamic(["rulebase", "security", "nat", "mgt-config", "users", "admin", "log-settings", "network", "vpn", "ipsec", "global-protect", "zone"]);
+  let ApprovedAdmins = dynamic([]);   // optional: Panorama or automation accounts under change management
+  CommonSecurityLog
+  | where TimeGenerated > ago(lookback)
+  | where DeviceVendor == "Palo Alto Networks" and DeviceProduct == "PAN-OS"
+  | where Activity =~ "CONFIG" or DeviceEventClassID =~ "CONFIG"
+  // Default PAN-OS CEF config format: act=$cmd duser=$admin destinationServiceName=$client msg=$path, result in the CEF header
+  | extend
+      Command = DeviceAction,
+      AdminUser = coalesce(DestinationUserName, SourceUserName),
+      Client = DestinationServiceName,
+      ConfigPath = Message,
+      Result = iff(Activity =~ "CONFIG", DeviceEventClassID, Activity),
+      BeforeChange = case(DeviceCustomString1Label has "Before", DeviceCustomString1, DeviceCustomString2Label has "Before", DeviceCustomString2, ""),
+      AfterChange = case(DeviceCustomString1Label has "After", DeviceCustomString1, DeviceCustomString2Label has "After", DeviceCustomString2, "")
+  | where AdminUser !in (ApprovedAdmins)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      ChangeCount = count(),
+      Commands = make_set(Command, 20),
+      ConfigPaths = make_set(ConfigPath, 25),
+      Results = make_set(Result, 10),
+      BeforeSample = make_set(BeforeChange, 5),
+      AfterSample = make_set(AfterChange, 5)
+      by FirewallName = DeviceName, AdminUser, AdminSourceIP = SourceIP, Client
+  | extend HighRiskChange = iff(tostring(ConfigPaths) has_any (HighRiskPaths), "Yes", "No")
+  | extend Committed = iff(tostring(Commands) has "commit", "Yes", "No")
+  | project StartTime, EndTime, FirewallName, AdminUser, AdminSourceIP, Client, ChangeCount, Commands, Committed, HighRiskChange, ConfigPaths, Results, BeforeSample, AfterSample
+entityMappings:
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AdminUser
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: AdminSourceIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  AdminUser: AdminUser
+  Client: Client
+  Commands: Commands
+  Committed: Committed
+  HighRiskChange: HighRiskChange
+alertDetailsOverride:
+  alertDisplayNameFormat: Palo Alto {{FirewallName}} configuration changed by {{AdminUser}}
+  alertDescriptionFormat: '{{AdminUser}} ran {{ChangeCount}} configuration command(s) on {{FirewallName}}. High-risk area changed: {{HighRiskChange}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

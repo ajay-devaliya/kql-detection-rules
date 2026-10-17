@@ -1,0 +1,92 @@
+id: 108b40d9-d607-45ef-bf5d-fe2e4ddcb6df
+name: Firewall - Slow port scan over 24 hours
+description: |
+  Detects a low-and-slow scan: one source IP touching 50 or more different host:port targets over 24 hours, spread across at least 6 separate hours, while never exceeding 20 targets in any single hour. Attackers scan slowly to stay under the one-hour thresholds used by FW-001 and FW-002; this rule catches what those miss.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: CefAma
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: Fortinet
+  dataTypes:
+  - CommonSecurityLog
+- connectorId: PaloAltoNetworks
+  dataTypes:
+  - CommonSecurityLog
+queryFrequency: 1h
+queryPeriod: 1d
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Reconnaissance
+- Discovery
+relevantTechniques:
+- T1595
+- T1046
+- T1595.001
+query: |
+  let lookback = 1d;
+  let MinTotalTargets = 50;     // distinct host:port pairs over the whole day
+  let MinActiveHours = 6;       // the activity must be spread out
+  let MaxTargetsPerHour = 20;   // above this, the fast-scan rules (FW-001/FW-002) already fire
+  let ExcludedSources = dynamic([]);
+  let Base = materialize(
+  CommonSecurityLog
+      | where TimeGenerated > ago(lookback)
+      | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+      | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)
+      | where not(Protocol in~ ("icmp", "1"))
+      | where SourceIP !in (ExcludedSources)
+      | extend Target = strcat(DestinationIP, ":", tostring(DestinationPort))
+      | project TimeGenerated, SourceIP, DestinationIP, DestinationPort, Target, DeviceAction, DeviceVendor, DeviceName);
+  let HourlyProfile = Base
+      | summarize TargetsThisHour = dcount(Target) by SourceIP, Hour = bin(TimeGenerated, 1h)
+      | summarize ActiveHours = count(), MaxTargetsInOneHour = max(TargetsThisHour) by SourceIP;
+  Base
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      TotalTargets = dcount(Target),
+      DistinctHosts = dcount(DestinationIP),
+      DistinctPorts = dcount(DestinationPort),
+      SampleTargets = make_set(Target, 50),
+      Actions = make_set(DeviceAction, 10),
+      DeviceVendor = take_any(DeviceVendor),
+      FirewallName = take_any(DeviceName)
+      by SourceIP
+  | where TotalTargets >= MinTotalTargets
+  | join kind=inner HourlyProfile on SourceIP
+  | where ActiveHours >= MinActiveHours and MaxTargetsInOneHour < MaxTargetsPerHour
+  | project StartTime, EndTime, SourceIP, TotalTargets, DistinctHosts, DistinctPorts, ActiveHours, MaxTargetsInOneHour, SampleTargets, Actions, DeviceVendor, FirewallName
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+- entityType: Host
+  fieldMappings:
+  - identifier: HostName
+    columnName: FirewallName
+customDetails:
+  TotalTargets: TotalTargets
+  ActiveHours: ActiveHours
+  MaxTargetsInOneHour: MaxTargetsInOneHour
+  SampleTargets: SampleTargets
+alertDetailsOverride:
+  alertDisplayNameFormat: Slow port scan from {{SourceIP}} over 24 hours
+  alertDescriptionFormat: '{{SourceIP}} reached {{TotalTargets}} different host:port targets spread over {{ActiveHours}} hours.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Network

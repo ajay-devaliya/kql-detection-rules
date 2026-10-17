@@ -1,0 +1,38 @@
+// FW-003 | Firewall - Slow port scan over 24 hours
+// Severity: Medium | Scheduled: every 1h, looking back 1d
+// MITRE ATT&CK: Reconnaissance, Discovery | T1595, T1046, T1595.001
+// Table(s): CommonSecurityLog
+
+let lookback = 1d;
+let MinTotalTargets = 50;     // distinct host:port pairs over the whole day
+let MinActiveHours = 6;       // the activity must be spread out
+let MaxTargetsPerHour = 20;   // above this, the fast-scan rules (FW-001/FW-002) already fire
+let ExcludedSources = dynamic([]);
+let Base = materialize(
+CommonSecurityLog
+    | where TimeGenerated > ago(lookback)
+    | where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+    | where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)
+    | where not(Protocol in~ ("icmp", "1"))
+    | where SourceIP !in (ExcludedSources)
+    | extend Target = strcat(DestinationIP, ":", tostring(DestinationPort))
+    | project TimeGenerated, SourceIP, DestinationIP, DestinationPort, Target, DeviceAction, DeviceVendor, DeviceName);
+let HourlyProfile = Base
+    | summarize TargetsThisHour = dcount(Target) by SourceIP, Hour = bin(TimeGenerated, 1h)
+    | summarize ActiveHours = count(), MaxTargetsInOneHour = max(TargetsThisHour) by SourceIP;
+Base
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    TotalTargets = dcount(Target),
+    DistinctHosts = dcount(DestinationIP),
+    DistinctPorts = dcount(DestinationPort),
+    SampleTargets = make_set(Target, 50),
+    Actions = make_set(DeviceAction, 10),
+    DeviceVendor = take_any(DeviceVendor),
+    FirewallName = take_any(DeviceName)
+    by SourceIP
+| where TotalTargets >= MinTotalTargets
+| join kind=inner HourlyProfile on SourceIP
+| where ActiveHours >= MinActiveHours and MaxTargetsInOneHour < MaxTargetsPerHour
+| project StartTime, EndTime, SourceIP, TotalTargets, DistinctHosts, DistinctPorts, ActiveHours, MaxTargetsInOneHour, SampleTargets, Actions, DeviceVendor, FirewallName

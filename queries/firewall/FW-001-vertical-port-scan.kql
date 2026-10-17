@@ -1,0 +1,30 @@
+// FW-001 | Firewall - Vertical port scan (one source, many ports on one host)
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: Reconnaissance, Discovery | T1595, T1046, T1595.001
+// Table(s): CommonSecurityLog
+
+let lookback = 1h;
+let PortThreshold = 25;                  // distinct destination ports from one source to one host
+let ExcludedSources = dynamic([]);       // approved scanners, e.g. vulnerability scanner IPs
+CommonSecurityLog
+| where TimeGenerated > ago(lookback)
+| where DeviceVendor in ("Fortinet", "Palo Alto Networks")
+| where isnotempty(SourceIP) and isnotempty(DestinationIP) and isnotnull(DestinationPort)
+| where not(Protocol in~ ("icmp", "1"))
+| where SourceIP !in (ExcludedSources)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    DistinctPorts = dcount(DestinationPort),
+    SamplePorts = make_set(DestinationPort, 50),
+    Actions = make_set(DeviceAction, 10),
+    TotalEvents = count(),
+    FirewallName = take_any(DeviceName)
+    by SourceIP, DestinationIP, DeviceVendor
+| where DistinctPorts >= PortThreshold
+| extend Direction = case(
+    ipv4_is_private(SourceIP) and ipv4_is_private(DestinationIP), "Internal",
+    ipv4_is_private(SourceIP), "Outbound",
+    ipv4_is_private(DestinationIP), "Inbound",
+    "External")
+| project StartTime, EndTime, SourceIP, DestinationIP, Direction, DistinctPorts, SamplePorts, Actions, TotalEvents, DeviceVendor, FirewallName

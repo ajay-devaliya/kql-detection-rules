@@ -1,0 +1,96 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "workspace": {
+      "type": "String"
+    }
+  },
+  "resources": [
+    {
+      "id": "[concat(resourceId('Microsoft.OperationalInsights/workspaces/providers', parameters('workspace'), 'Microsoft.SecurityInsights'),'/alertRules/b2df3c81-ccba-487a-8ef8-79cc0c733aa4')]",
+      "name": "[concat(parameters('workspace'),'/Microsoft.SecurityInsights/b2df3c81-ccba-487a-8ef8-79cc0c733aa4')]",
+      "type": "Microsoft.OperationalInsights/workspaces/providers/alertRules",
+      "kind": "Scheduled",
+      "apiVersion": "2023-12-01-preview",
+      "properties": {
+        "displayName": "FW-010 Firewall - Outbound connection allowed to a threat-intelligence IP",
+        "description": "Detects internal hosts making outbound connections to IPs that are active indicators in Microsoft Sentinel threat intelligence, where the firewall allowed the session. This can indicate malware calling its command-and-control server or data being sent to attacker infrastructure.",
+        "severity": "High",
+        "enabled": true,
+        "query": "let dt_lookBack = 1h;\nlet ioc_lookBack = 14d;\nlet MinConfidence = 0;   // raise (for example to 50) if low-confidence indicators are noisy\n// FortiGate logs allowed sessions as accept/close/timeout/*-rst; Palo Alto uses allow\nlet AllowedActions = dynamic([\"accept\", \"allow\", \"close\", \"timeout\", \"server-rst\", \"client-rst\"]);\nlet MaliciousIPs = ThreatIntelIndicators\n    | where TimeGenerated > ago(ioc_lookBack)\n    | where ObservableKey in (\"ipv4-addr:value\", \"ipv6-addr:value\", \"network-traffic:src_ref.value\", \"network-traffic:dst_ref.value\")\n    | summarize arg_max(TimeGenerated, *) by Id\n    | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())\n    | extend TI_Description = tostring(Data.description)\n    | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue\n    | project TI_IP, TI_Confidence = Confidence, TI_Description, TI_IndicatorId = Id;\nCommonSecurityLog\n| where TimeGenerated > ago(dt_lookBack)\n| where DeviceVendor in (\"Fortinet\", \"Palo Alto Networks\")\n| where isnotempty(SourceIP) and isnotempty(DestinationIP)\n| where ipv4_is_private(SourceIP) and not(ipv4_is_private(DestinationIP))\n| where tolower(DeviceAction) in (AllowedActions)\n| join kind=inner (MaliciousIPs | where TI_Confidence >= MinConfidence) on $left.DestinationIP == $right.TI_IP\n| summarize\n    StartTime = min(TimeGenerated),\n    EndTime = max(TimeGenerated),\n    SessionCount = count(),\n    DestinationPorts = make_set(DestinationPort, 25),\n    Applications = make_set(ApplicationProtocol, 10),\n    BytesSent = sum(SentBytes),\n    BytesReceived = sum(ReceivedBytes),\n    FirewallName = take_any(DeviceName)\n    by SourceIP, DestinationIP, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor\n| project StartTime, EndTime, SourceIP, DestinationIP, SessionCount, DestinationPorts, Applications, BytesSent, BytesReceived, TI_Confidence, TI_Description, TI_IndicatorId, DeviceVendor, FirewallName",
+        "queryFrequency": "PT1H",
+        "queryPeriod": "P14D",
+        "triggerOperator": "GreaterThan",
+        "triggerThreshold": 0,
+        "suppressionDuration": "PT5H",
+        "suppressionEnabled": false,
+        "tactics": [
+          "CommandAndControl",
+          "Exfiltration"
+        ],
+        "techniques": [
+          "T1071",
+          "T1041"
+        ],
+        "subTechniques": [],
+        "alertRuleTemplateName": null,
+        "incidentConfiguration": {
+          "createIncident": true,
+          "groupingConfiguration": {
+            "enabled": true,
+            "reopenClosedIncident": false,
+            "lookbackDuration": "P1D",
+            "matchingMethod": "AllEntities",
+            "groupByEntities": [],
+            "groupByAlertDetails": [],
+            "groupByCustomDetails": []
+          }
+        },
+        "eventGroupingSettings": {
+          "aggregationKind": "AlertPerResult"
+        },
+        "alertDetailsOverride": {
+          "alertDisplayNameFormat": "Internal host {{SourceIP}} connected to malicious IP {{DestinationIP}}",
+          "alertDescriptionFormat": "The firewall allowed {{SessionCount}} outbound session(s) from {{SourceIP}} to threat-intel IP {{DestinationIP}}."
+        },
+        "customDetails": {
+          "SessionCount": "SessionCount",
+          "BytesSent": "BytesSent",
+          "DestinationPorts": "DestinationPorts",
+          "TIConfidence": "TI_Confidence",
+          "TIDescription": "TI_Description"
+        },
+        "entityMappings": [
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "SourceIP"
+              }
+            ]
+          },
+          {
+            "entityType": "IP",
+            "fieldMappings": [
+              {
+                "identifier": "Address",
+                "columnName": "DestinationIP"
+              }
+            ]
+          },
+          {
+            "entityType": "Host",
+            "fieldMappings": [
+              {
+                "identifier": "HostName",
+                "columnName": "FirewallName"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
