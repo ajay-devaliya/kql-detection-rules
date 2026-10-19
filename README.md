@@ -1,18 +1,16 @@
 # KQL Detection Rules: Firewall and Windows
 
-Microsoft Sentinel scheduled analytics rules written in KQL (Kusto Query Language), plus YARA rules for file and memory scanning.
+Microsoft Sentinel scheduled analytics rules written in KQL (Kusto Query Language).
 
 - **Firewall (11 rules):** FortiGate and Palo Alto: port scans, ping sweeps, threat-intel matches, configuration changes and traffic allowed to or from restricted countries.
 - **Windows (23 rules):** credential dumping, brute force, Kerberos attacks, suspicious PowerShell and process activity, defence evasion, persistence and remote access tools.
-- **YARA:** Mimikatz, PowerShell reverse shells and Kinsing.
 
 Linux rules are next.
 
-The repo has three folders:
+The repo has two folders:
 
 - `rules/` holds the rules as Sentinel analytics rule YAML (query, schedule, severity, MITRE mapping, entity mapping).
 - `queries/` holds the same queries as plain `.kql`, ready to paste into Log Analytics.
-- `yara/` holds YARA rules for scanning files, memory dumps and scripts.
 
 All rules are **Scheduled** rules, not NRT.
 
@@ -59,16 +57,6 @@ All rules are **Scheduled** rules, not NRT.
 | [WIN-021](rules/windows/WIN-021-suspicious-service-installed.yaml) | Suspicious service installed | High | 1h / 1h | T1543.003, T1569.002 |
 | [WIN-022](rules/windows/WIN-022-suspicious-scheduled-task.yaml) | Scheduled task created that runs a script host or a file from a suspicious folder | Medium | 1h / 1h | T1053.005 |
 | [WIN-023](rules/windows/WIN-023-user-added-to-privileged-group.yaml) | Account added to a privileged group | High | 15m / 15m | T1098.007 |
-
-## YARA rules
-
-| File | Detects | Use on |
-| --- | --- | --- |
-| [mimikatz.yar](yara/mimikatz.yar) | Mimikatz binaries (including renamed builds), Mimikatz strings in memory dumps, Invoke-Mimikatz scripts | Windows files, memory images |
-| [reverse_shell_scripts.yar](yara/reverse_shell_scripts.yar) | PowerShell TCPClient reverse shells, Nishang Invoke-PowerShellTcp, powercat, ConPtyShell | Scripts, PowerShell transcripts |
-| [kinsing.yar](yara/kinsing.yar) | Kinsing Go binary and its dropper shell script (crypto-mining botnet) | Linux files |
-
-Run them with `yara -r yara/mimikatz.yar C:\\path\\to\\scan`, or load them into your EDR or sandbox.
 
 ## Data sources
 
