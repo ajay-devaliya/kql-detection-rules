@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1012
+id: 392a6bb3-b466-43d4-9e5a-953166f81fe7
 name: Windows - Audit policy weakened or log collection stopped
 description: |
   Detects attempts to stop Windows from recording or forwarding events: audit policy categories having success or failure auditing removed (4719), auditpol commands that disable or clear auditing, the Windows Event Log service being disabled or stopped by command, and log-shipping agents (Azure Monitor Agent, Winlogbeat, NXLog, Elastic Agent, Sysmon, Splunk forwarder) stopping. This is the Windows equivalent of turning syslog off.

@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1014
+id: 861e97e1-0e75-4680-836e-d6db703e6993
 name: Windows - Process started from a suspicious folder or LOLBin used to download/execute
 description: |
   Detects programs running from folders attackers favour (Users\Public, PerfLogs, the Recycle Bin, Windows\Temp, the root of ProgramData), and built-in Windows binaries abused to download or run code: certutil -urlcache/-decode, mshta with a URL or script, regsvr32 /i:http (Squiblydoo), rundll32 javascript:, bitsadmin /transfer, msiexec from a URL and wmic process call create.

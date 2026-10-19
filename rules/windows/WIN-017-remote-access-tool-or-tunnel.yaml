@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1017
+id: 4050e532-ceab-4ce6-b8b3-fffc828fd701
 name: Windows - Remote access tool or tunnelling tool executed (possible RAT)
 description: |
   Detects remote access software and tunnelling tools that attackers use as a ready-made RAT or to expose internal services: AnyDesk, TeamViewer, ScreenConnect, Atera, Splashtop, RustDesk, NetSupport, Radmin, Ammyy, ngrok, Chisel, Plink and Cloudflared. Add the tools your organisation approves to ApprovedTools.

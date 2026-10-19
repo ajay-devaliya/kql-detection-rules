@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1006
+id: ce469df8-9bbc-45e9-a62d-5a2bea3727fa
 name: Windows - Repeated authentication failures by logon type (3, 4, 5, 10, 11)
 description: |
   Detects 20 or more failed logons (Event ID 4625) within an hour for the same host, source and logon type, across network (3), batch (4), service (5), RDP (10) and cached interactive (11) logons. Each alert names the logon type and the failure reasons (wrong password, unknown user, disabled or locked account). Logon type 6 is not used by Windows, so it is not included.

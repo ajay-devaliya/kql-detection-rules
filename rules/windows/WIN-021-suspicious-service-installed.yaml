@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1021
+id: 69234f46-ab36-421f-b341-6c5d0d672a04
 name: Windows - Suspicious service installed
 description: |
   Detects new services (System Event ID 7045) whose binary path runs a shell or script host, points to a user-writable folder, uses %COMSPEC%, or matches remote-execution tools such as PsExec (PSEXESVC). Attackers install services for persistence and to run code as SYSTEM.

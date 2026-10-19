@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1011
+id: 4fc37fc6-52bd-4991-8f7f-bd421a613582
 name: Windows - Security or System event log cleared
 description: |
   Detects Windows event logs being cleared: the Security log (1102), the System log (104), or commands such as wevtutil cl, Clear-EventLog and Remove-EventLog. Attackers clear logs to hide what they did; it is rarely legitimate on servers.

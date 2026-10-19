@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1004
+id: 4b2d88a0-a886-4205-b852-5396bc5491a6
 name: Windows - RDP brute force (with success check)
 description: |
   Detects 10 or more failed RDP logons (Event ID 4625, logon type 10) from one source IP to one host within an hour, and shows whether the same IP then logged on successfully (4624). A success after many failures means the password may have been guessed. Note: when Network Level Authentication is on, failed RDP logons are often recorded as logon type 3; WIN-006 covers those.

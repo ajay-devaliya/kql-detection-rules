@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1001
+id: d8c91f3d-37bd-4d8e-9edd-5a99703b1bbb
 name: Windows - Mimikatz execution or command-line usage
 description: |
   Detects Mimikatz by its binary name, its original file name (catches renamed copies when Sysmon is present), its module commands such as sekurlsa:: and lsadump::, or Invoke-Mimikatz in PowerShell. Mimikatz is used to dump credentials from memory, forge Kerberos tickets and pass the hash.

@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1013
+id: e67202af-80b6-46d5-8208-22374c841318
 name: Windows - Executable or script dropped by a script host, Office or LOLBin
 description: |
   Detects executables, DLLs and scripts being written (Sysmon Event ID 11) by processes that should not normally drop them, such as PowerShell, cmd, script hosts, mshta, certutil, BITS or Office apps, and any file written into a Startup folder. Dropping a payload to disk is a common step after initial access.

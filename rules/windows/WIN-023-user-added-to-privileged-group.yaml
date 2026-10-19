@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1023
+id: 7775e7f6-e467-4dc1-88a3-32b78d3709f2
 name: Windows - Account added to a privileged group
 description: |
   Detects accounts being added to Administrators, Domain Admins, Enterprise Admins, Schema Admins, Account/Backup/Server Operators, DnsAdmins, Group Policy Creator Owners or Remote Desktop Users (Event IDs 4728, 4732, 4756). Attackers add themselves to these groups to keep admin access.

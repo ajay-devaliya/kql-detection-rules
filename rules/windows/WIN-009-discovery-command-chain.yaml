@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1009
+id: 47508ff2-6a85-4884-b30b-408abb95e9ff
 name: Windows - Chain of discovery commands from one user (whoami, net, nltest, ipconfig...)
 description: |
   Detects the same user running 4 or more different reconnaissance tools on one host within 15 minutes, for example whoami, net user, nltest, ipconfig, systeminfo and quser run through cmd.exe or PowerShell. Attackers run this chain right after gaining access to learn who they are and what is around them.

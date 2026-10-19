@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1016
+id: 24e06a98-7a78-465c-a317-213b291e5629
 name: Windows - Outbound connection from a process in a suspicious folder or a LOLBin
 description: |
   Detects processes making outbound connections to public IPs (Sysmon Event ID 3) when the process runs from a user-writable or unusual folder (Temp, Downloads, Users\Public, AppData, ProgramData, PerfLogs) or is a Windows binary that rarely talks to the internet (rundll32, regsvr32, mshta, wscript, cscript, msbuild, installutil, certutil). This often reveals malware or a RAT calling home.

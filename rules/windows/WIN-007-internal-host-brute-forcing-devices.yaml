@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1007
+id: 36a049a5-a8bb-4a09-a29b-f34687b71a49
 name: Windows - Internal host brute forcing or password spraying other devices
 description: |
   Detects one internal IP causing failed logons (Event ID 4625) on 5 or more different hosts, or against 10 or more different accounts, within an hour. This is how an attacker on a compromised machine guesses passwords across the network before moving laterally.

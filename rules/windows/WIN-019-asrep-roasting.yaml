@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1019
+id: 5a2744dc-aaa6-469c-9cb8-b53540f1b234
 name: 'Windows - AS-REP roasting: ticket issued without Kerberos pre-authentication'
 description: |
   Detects Kerberos TGTs issued without pre-authentication (Event ID 4768 with PreAuthType 0). Accounts with 'Do not require Kerberos preauthentication' can be AS-REP roasted: an attacker requests their ticket and cracks the password offline. Every alert is also a reminder to fix that account setting.

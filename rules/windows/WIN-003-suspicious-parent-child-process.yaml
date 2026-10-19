@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1003
+id: 58e409cb-70f1-4fc8-9b7d-28e00a09d910
 name: Windows - Office, browser or web server spawning a shell or script host
 description: |
   Detects Office applications, PDF readers, browsers and web server processes starting command shells, script hosts or LOLBins. This is the classic pattern of a malicious document macro, a browser exploit or a web shell running commands.

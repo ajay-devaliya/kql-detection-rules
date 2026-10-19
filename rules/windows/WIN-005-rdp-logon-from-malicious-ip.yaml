@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1005
+id: 7695281c-c7ff-4b6e-8efe-f58e69aad4b9
 name: Windows - RDP or network logon attempt from a threat-intelligence IP
 description: |
   Detects any successful or failed RDP / network logon (Event IDs 4624 and 4625, logon types 3 and 10) where the source IP is an active indicator in Microsoft Sentinel threat intelligence. A successful logon from a known-malicious IP is a likely compromise.

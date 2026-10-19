@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1018
+id: 92fe8650-4944-4f81-bb82-d41cce4bf5e8
 name: 'Windows - Kerberoasting: RC4 service tickets requested for several services'
 description: |
   Detects one account requesting RC4-encrypted (0x17) Kerberos service tickets (Event ID 4769) for 3 or more different service accounts within an hour. Attackers request these tickets to crack service-account passwords offline. Machine accounts and krbtgt are excluded. Runs on domain controllers.

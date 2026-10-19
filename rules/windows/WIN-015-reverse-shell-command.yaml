@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1015
+id: 199eabc7-da17-48d4-9e0f-bff837db8d5a
 name: Windows - Reverse shell command line
 description: |
   Detects common reverse shell patterns on Windows: PowerShell creating a System.Net.Sockets.TCPClient and streaming a shell, powercat, Invoke-PowerShellTcp (Nishang), netcat or ncat run with -e / --exec, socat with exec, and bash /dev/tcp one-liners through WSL.

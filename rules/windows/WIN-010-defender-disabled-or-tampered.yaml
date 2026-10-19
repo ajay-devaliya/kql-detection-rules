@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1010
+id: 1e86acc1-e4aa-4b5a-9d2a-413c82855f3f
 name: Windows - Microsoft Defender disabled, stopped or exclusions added
 description: |
   Detects Microsoft Defender protection being turned off or weakened: real-time protection disabled (5001), antispyware or antivirus disabled (5010, 5012), security-relevant configuration changes such as new exclusions (5007), the Defender service stopping (7036), and commands like Set-MpPreference -Disable*, Add-MpPreference -Exclusion*, or sc stop/config WinDefend.

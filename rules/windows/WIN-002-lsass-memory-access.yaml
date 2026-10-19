@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1002
+id: 0919d0f6-16d7-484e-911a-854732cf4e16
 name: Windows - Suspicious access to LSASS memory (credential dumping)
 description: |
   Detects a process opening lsass.exe with access rights used for reading its memory (Sysmon Event ID 10), or with a call trace through dbghelp/dbgcore (MiniDumpWriteDump). This is how Mimikatz, ProcDump, comsvcs.dll MiniDump and similar tools steal credentials. Security products that legitimately read LSASS are excluded.

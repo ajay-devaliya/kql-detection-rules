@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1022
+id: 11dc0c63-9a9b-4a63-8230-1d3f4c6e28f1
 name: Windows - Scheduled task created that runs a script host or a file from a suspicious folder
 description: |
   Detects scheduled tasks created (Security Event ID 4698) whose action runs PowerShell, cmd, mshta, script hosts, rundll32 or regsvr32, downloads from a URL, or runs a file from a user-writable folder. Scheduled tasks are one of the most common persistence methods. Requires 'Audit Other Object Access Events'.

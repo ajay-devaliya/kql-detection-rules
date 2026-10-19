@@ -1,4 +1,4 @@
-id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1008
+id: facde093-ca0a-4dc2-88f9-c01048748c43
 name: Windows - Suspicious PowerShell command line (encoded, download cradle, AMSI bypass)
 description: |
   Detects PowerShell command lines that combine two or more attacker techniques: encoded commands, hidden windows, execution-policy bypass, download cradles (DownloadString, Invoke-WebRequest, BITS), IEX / Invoke-Expression, Base64 decoding, reflection loading or AMSI bypass strings. Scoring on two or more indicators keeps admin scripts from alerting.
