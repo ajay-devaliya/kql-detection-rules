@@ -1,0 +1,92 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1008
+name: Windows - Suspicious PowerShell command line (encoded, download cradle, AMSI bypass)
+description: |
+  Detects PowerShell command lines that combine two or more attacker techniques: encoded commands, hidden windows, execution-policy bypass, download cradles (DownloadString, Invoke-WebRequest, BITS), IEX / Invoke-Expression, Base64 decoding, reflection loading or AMSI bypass strings. Scoring on two or more indicators keeps admin scripts from alerting.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Execution
+- DefenseEvasion
+relevantTechniques:
+- T1059
+- T1027
+- T1105
+- T1059.001
+query: |
+  let lookback = 1h;
+  let MinIndicators = 2;
+  let ProcessEvents = union
+      (SecurityEvent
+          | where TimeGenerated > ago(lookback)
+          | where EventID == 4688
+          | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+              ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+      (Event
+          | where TimeGenerated > ago(lookback)
+          | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+          | extend X = parse_xml(EventData)
+          | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+          | extend U = split(tostring(Props.User), "\\")
+          | project TimeGenerated, Computer,
+              AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+              ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+              CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+      | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+               ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+  ProcessEvents
+  | where ProcessFile in ("powershell.exe", "pwsh.exe", "powershell_ise.exe") or OriginalFileName =~ "PowerShell.EXE"
+  | extend Indicators = extract_all(@"(?i)(encodedcommand|\s-e(nc?)?\s|\s-w(indowstyle)?\s+h(idden)?|-ep\s+bypass|executionpolicy\s+bypass|downloadstring|downloadfile|downloaddata|invoke-webrequest|\biwr\b|start-bitstransfer|net\.webclient|\biex\b|invoke-expression|frombase64string|reflection\.assembly|amsiutils|amsiinitfailed|-noprofile|\s-nop\s)", CommandLine)
+  | extend IndicatorCount = array_length(set_union(Indicators, dynamic([])))
+  | where IndicatorCount >= MinIndicators
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Executions = count(),
+      MaxIndicators = max(IndicatorCount),
+      MatchedIndicators = make_set(Indicators, 20),
+      CommandLines = make_set(CommandLine, 10),
+      ParentProcesses = make_set(ParentProcessName, 10)
+      by Computer, AccountName, AccountDomain
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  MatchedIndicators: MatchedIndicators
+  CommandLines: CommandLines
+  ParentProcesses: ParentProcesses
+alertDetailsOverride:
+  alertDisplayNameFormat: Suspicious PowerShell on {{Computer}} by {{AccountName}}
+  alertDescriptionFormat: PowerShell ran with {{MaxIndicators}} attacker techniques combined on {{Computer}}.
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

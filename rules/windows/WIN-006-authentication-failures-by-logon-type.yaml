@@ -1,0 +1,86 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1006
+name: Windows - Repeated authentication failures by logon type (3, 4, 5, 10, 11)
+description: |
+  Detects 20 or more failed logons (Event ID 4625) within an hour for the same host, source and logon type, across network (3), batch (4), service (5), RDP (10) and cached interactive (11) logons. Each alert names the logon type and the failure reasons (wrong password, unknown user, disabled or locked account). Logon type 6 is not used by Windows, so it is not included.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CredentialAccess
+relevantTechniques:
+- T1110
+- T1110.001
+query: |
+  let lookback = 1h;
+  let WatchedLogonTypes = dynamic([3, 4, 5, 10, 11]);
+  let FailureThreshold = 20;
+  SecurityEvent
+  | where TimeGenerated > ago(lookback)
+  | where EventID == 4625 and LogonType in (WatchedLogonTypes)
+  | extend LogonTypeName = case(
+      LogonType == 3, "3 - Network",
+      LogonType == 4, "4 - Batch",
+      LogonType == 5, "5 - Service",
+      LogonType == 10, "10 - RemoteInteractive (RDP)",
+      LogonType == 11, "11 - CachedInteractive",
+      tostring(LogonType))
+  | extend FailureReason = case(
+      SubStatus =~ "0xC000006A", "Wrong password",
+      SubStatus =~ "0xC0000064", "User does not exist",
+      SubStatus =~ "0xC0000072", "Account disabled",
+      SubStatus =~ "0xC0000234", "Account locked out",
+      SubStatus =~ "0xC0000071", "Password expired",
+      SubStatus =~ "0xC000006F", "Outside allowed logon hours",
+      Status =~ "0xC000015B", "Logon type not granted",
+      strcat(Status, " / ", SubStatus))
+  | extend SourceIP = iff(IpAddress in ("-", ""), "", IpAddress)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      FailedAttempts = count(),
+      DistinctAccounts = dcount(TargetUserName),
+      TargetAccounts = make_set(TargetUserName, 25),
+      FailureReasons = make_set(FailureReason, 10)
+      by Computer, LogonTypeName, SourceIP, SourceWorkstation = WorkstationName
+  | where FailedAttempts >= FailureThreshold
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+customDetails:
+  LogonType: LogonTypeName
+  FailedAttempts: FailedAttempts
+  FailureReasons: FailureReasons
+  TargetAccounts: TargetAccounts
+alertDetailsOverride:
+  alertDisplayNameFormat: '{{FailedAttempts}} failed logons (type {{LogonTypeName}}) on {{Computer}}'
+  alertDescriptionFormat: '{{FailedAttempts}} failed logons of type {{LogonTypeName}} on {{Computer}} within one hour.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

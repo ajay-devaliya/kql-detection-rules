@@ -1,0 +1,37 @@
+// WIN-001 | Windows - Mimikatz execution or command-line usage
+// Severity: High | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CredentialAccess | T1003, T1003.001
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let ProcessEvents = union
+    (SecurityEvent
+        | where TimeGenerated > ago(lookback)
+        | where EventID == 4688
+        | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+            ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+    (Event
+        | where TimeGenerated > ago(lookback)
+        | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+        | extend X = parse_xml(EventData)
+        | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+        | extend U = split(tostring(Props.User), "\\")
+        | project TimeGenerated, Computer,
+            AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+            ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+            CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+             ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+ProcessEvents
+| where ProcessFile in ("mimikatz.exe", "mimilove.exe")
+    or OriginalFileName =~ "mimikatz.exe"
+    or CommandLine matches regex @"(?i)(sekurlsa::|lsadump::|kerberos::(golden|ptt|list|tgt)|privilege::debug|token::elevate|misc::memssp|dpapi::|vault::cred|crypto::capi|invoke-mimikatz)"
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Executions = count(),
+    CommandLines = make_set(CommandLine, 10),
+    Processes = make_set(ProcessName, 10),
+    ParentProcesses = make_set(ParentProcessName, 10),
+    EventSources = make_set(EventSource, 2)
+    by Computer, AccountName, AccountDomain

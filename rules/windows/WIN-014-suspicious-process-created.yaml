@@ -1,0 +1,100 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1014
+name: Windows - Process started from a suspicious folder or LOLBin used to download/execute
+description: |
+  Detects programs running from folders attackers favour (Users\Public, PerfLogs, the Recycle Bin, Windows\Temp, the root of ProgramData), and built-in Windows binaries abused to download or run code: certutil -urlcache/-decode, mshta with a URL or script, regsvr32 /i:http (Squiblydoo), rundll32 javascript:, bitsadmin /transfer, msiexec from a URL and wmic process call create.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Execution
+- DefenseEvasion
+relevantTechniques:
+- T1218
+- T1105
+- T1047
+- T1218.005
+- T1218.010
+- T1218.011
+query: |
+  let lookback = 1h;
+  let ProcessEvents = union
+      (SecurityEvent
+          | where TimeGenerated > ago(lookback)
+          | where EventID == 4688
+          | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+              ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+      (Event
+          | where TimeGenerated > ago(lookback)
+          | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+          | extend X = parse_xml(EventData)
+          | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+          | extend U = split(tostring(Props.User), "\\")
+          | project TimeGenerated, Computer,
+              AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+              ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+              CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+      | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+               ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+  ProcessEvents
+  | extend Reason = case(
+      ProcessName matches regex @"(?i)\\(users\\public|perflogs|\$recycle\.bin|windows\\temp)\\", "Runs from a suspicious folder",
+      ProcessName matches regex @"(?i)\\programdata\\[^\\]+\.exe$", "Runs from the root of ProgramData",
+      CommandLine matches regex @"(?i)certutil(\.exe)?.*(-urlcache|-decode|-split)", "certutil download or decode",
+      CommandLine matches regex @"(?i)mshta(\.exe)?\s+.*(http|vbscript:|javascript:)", "mshta running remote or inline script",
+      CommandLine matches regex @"(?i)regsvr32(\.exe)?.*/i:\s*http", "regsvr32 remote scriptlet (Squiblydoo)",
+      CommandLine matches regex @"(?i)rundll32(\.exe)?.*javascript:", "rundll32 running JavaScript",
+      CommandLine matches regex @"(?i)bitsadmin(\.exe)?.*/transfer", "bitsadmin download",
+      CommandLine matches regex @"(?i)msiexec(\.exe)?.*https?://", "msiexec installing from a URL",
+      CommandLine matches regex @"(?i)wmic(\.exe)?.*process\s+call\s+create", "wmic process creation",
+      "")
+  | where isnotempty(Reason)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Executions = count(),
+      Reasons = make_set(Reason, 10),
+      CommandLines = make_set(CommandLine, 10),
+      ParentProcesses = make_set(ParentProcessName, 10)
+      by Computer, AccountName, AccountDomain
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  Reasons: Reasons
+  CommandLines: CommandLines
+  ParentProcesses: ParentProcesses
+alertDetailsOverride:
+  alertDisplayNameFormat: Suspicious process execution on {{Computer}} by {{AccountName}}
+  alertDescriptionFormat: 'Suspicious process activity on {{Computer}}: see Reasons for what matched.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

@@ -1,0 +1,88 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1011
+name: Windows - Security or System event log cleared
+description: |
+  Detects Windows event logs being cleared: the Security log (1102), the System log (104), or commands such as wevtutil cl, Clear-EventLog and Remove-EventLog. Attackers clear logs to hide what they did; it is rarely legitimate on servers.
+severity: High
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- DefenseEvasion
+relevantTechniques:
+- T1070
+- T1070.001
+query: |
+  let lookback = 15m;
+  let SecurityCleared = SecurityEvent
+      | where TimeGenerated > ago(lookback)
+      | where EventID == 1102
+      | project TimeGenerated, Computer, AccountName = coalesce(SubjectUserName, Account), Activity = "Security log cleared (1102)", Details = Activity;
+  let SystemCleared = Event
+      | where TimeGenerated > ago(lookback)
+      | where EventLog == "System" and EventID == 104
+      | project TimeGenerated, Computer, AccountName = UserName, Activity = "Event log cleared (104)", Details = RenderedDescription;
+  let ProcessEvents = union
+      (SecurityEvent
+          | where TimeGenerated > ago(lookback)
+          | where EventID == 4688
+          | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+              ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+      (Event
+          | where TimeGenerated > ago(lookback)
+          | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+          | extend X = parse_xml(EventData)
+          | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+          | extend U = split(tostring(Props.User), "\\")
+          | project TimeGenerated, Computer,
+              AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+              ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+              CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+      | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+               ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+  let ClearCommands = ProcessEvents
+      | where CommandLine matches regex @"(?i)(wevtutil(\.exe)?\s+(cl|clear-log)\s|clear-eventlog|remove-eventlog|\[system\.diagnostics\.eventing\.reader\.eventlogsession\]::globalsession\.clearlog)"
+      | project TimeGenerated, Computer, AccountName, Activity = "Log clearing command", Details = CommandLine;
+  union SecurityCleared, SystemCleared, ClearCommands
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      EventCount = count(),
+      Activities = make_set(Activity, 10),
+      Details = make_set(Details, 10),
+      Accounts = make_set(AccountName, 10)
+      by Computer
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+customDetails:
+  Activities: Activities
+  Accounts: Accounts
+  Details: Details
+alertDetailsOverride:
+  alertDisplayNameFormat: Event log cleared on {{Computer}}
+  alertDescriptionFormat: Windows event logs were cleared on {{Computer}}.
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

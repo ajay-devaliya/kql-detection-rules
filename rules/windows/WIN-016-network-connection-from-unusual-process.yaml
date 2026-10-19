@@ -1,0 +1,78 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1016
+name: Windows - Outbound connection from a process in a suspicious folder or a LOLBin
+description: |
+  Detects processes making outbound connections to public IPs (Sysmon Event ID 3) when the process runs from a user-writable or unusual folder (Temp, Downloads, Users\Public, AppData, ProgramData, PerfLogs) or is a Windows binary that rarely talks to the internet (rundll32, regsvr32, mshta, wscript, cscript, msbuild, installutil, certutil). This often reveals malware or a RAT calling home.
+severity: Medium
+status: Available
+requiredDataConnectors: []
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CommandAndControl
+relevantTechniques:
+- T1071
+- T1218
+query: |
+  let lookback = 1h;
+  let RareNetworkBinaries = dynamic(["rundll32.exe", "regsvr32.exe", "mshta.exe", "wscript.exe", "cscript.exe", "msbuild.exe",
+      "installutil.exe", "certutil.exe", "regasm.exe", "regsvcs.exe", "cmstp.exe", "odbcconf.exe"]);
+  let AllowedImages = dynamic([]);   // full paths of approved software that lives in AppData (Teams, Zoom, etc.)
+  Event
+  | where TimeGenerated > ago(lookback)
+  | where Source == "Microsoft-Windows-Sysmon" and EventID == 3
+  | extend X = parse_xml(EventData)
+  | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+  | extend Image = tostring(Props.Image), DestinationIp = tostring(Props.DestinationIp), DestinationPort = toint(Props.DestinationPort),
+           DestinationHostname = tostring(Props.DestinationHostname), Initiated = tostring(Props.Initiated),
+           U = split(tostring(Props.User), "\\")
+  | where Initiated =~ "true"
+  | where isnotempty(DestinationIp) and not(ipv4_is_private(DestinationIp)) and DestinationIp !in ("127.0.0.1", "::1")
+  | extend ImageFile = tolower(tostring(split(Image, "\\")[-1]))
+  | where Image !in~ (AllowedImages)
+  | where ImageFile in (RareNetworkBinaries)
+      or Image matches regex @"(?i)\\(users\\public|perflogs|windows\\temp|appdata\\local\\temp|downloads)\\"
+      or Image matches regex @"(?i)\\programdata\\[^\\]+\.exe$"
+  | extend AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), "")
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Connections = count(),
+      DestinationIPs = make_set(DestinationIp, 20),
+      DestinationPorts = make_set(DestinationPort, 20),
+      DestinationHosts = make_set(DestinationHostname, 20)
+      by Computer, AccountName, AccountDomain, Image
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  Image: Image
+  DestinationIPs: DestinationIPs
+  DestinationPorts: DestinationPorts
+  Connections: Connections
+alertDetailsOverride:
+  alertDisplayNameFormat: Unusual process {{Image}} connected to the internet from {{Computer}}
+  alertDescriptionFormat: '{{Image}} made {{Connections}} outbound connection(s) to public IPs from {{Computer}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

@@ -1,0 +1,19 @@
+// WIN-019 | Windows - AS-REP roasting: ticket issued without Kerberos pre-authentication
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CredentialAccess | T1558, T1558.004
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4768 and PreAuthType == "0" and Status =~ "0x0"
+| extend SourceIP = trim_start(@"::ffff:", IpAddress)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Requests = count(),
+    Accounts = make_set(TargetUserName, 25),
+    DistinctAccounts = dcount(TargetUserName),
+    EncryptionTypes = make_set(TicketEncryptionType, 5),
+    DomainControllers = make_set(Computer, 5)
+    by SourceIP

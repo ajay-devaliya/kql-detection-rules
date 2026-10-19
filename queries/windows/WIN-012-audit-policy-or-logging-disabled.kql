@@ -1,0 +1,50 @@
+// WIN-012 | Windows - Audit policy weakened or log collection stopped
+// Severity: High | Scheduled: every 15m, looking back 15m
+// MITRE ATT&CK: DefenseEvasion | T1562, T1562.002, T1562.006
+// Table(s): SecurityEvent, Event
+
+let lookback = 15m;
+let LoggingAgents = dynamic(["Azure Monitor Agent", "Microsoft Monitoring Agent", "winlogbeat", "Elastic Agent", "nxlog", "Sysmon", "Sysmon64",
+    "SplunkForwarder", "Splunk Universal Forwarder", "Windows Event Log", "Windows Event Collector"]);
+let AuditRemoved = SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4719
+    | where AuditPolicyChanges has_any ("%%8448", "%%8450")    // success removed, failure removed
+    | project TimeGenerated, Computer, AccountName = SubjectUserName, Activity = "Audit policy auditing removed (4719)",
+        Details = strcat("Subcategory ", SubcategoryGuid, " changes ", AuditPolicyChanges);
+let AgentStopped = Event
+    | where TimeGenerated > ago(lookback)
+    | where EventLog == "System" and EventID in (7036, 7040)
+    | where RenderedDescription has_any (LoggingAgents)
+    | where RenderedDescription has "stopped" or RenderedDescription has "disabled"
+    | project TimeGenerated, Computer, AccountName = UserName, Activity = "Logging service stopped or disabled", Details = RenderedDescription;
+let ProcessEvents = union
+    (SecurityEvent
+        | where TimeGenerated > ago(lookback)
+        | where EventID == 4688
+        | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+            ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+    (Event
+        | where TimeGenerated > ago(lookback)
+        | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+        | extend X = parse_xml(EventData)
+        | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+        | extend U = split(tostring(Props.User), "\\")
+        | project TimeGenerated, Computer,
+            AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+            ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+            CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+             ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+let DisableCommands = ProcessEvents
+    | where CommandLine matches regex @"(?i)(auditpol(\.exe)?\s+/(clear|remove)|auditpol(\.exe)?\s+/set.*(/success:disable|/failure:disable)|sc(\.exe)?\s+(stop|config)\s+eventlog|stop-service.*eventlog|net(1)?(\.exe)?\s+stop\s+(eventlog|sysmon|winlogbeat|nxlog|azuremonitoragent)|sysmon(64)?(\.exe)?\s+-u|wevtutil(\.exe)?\s+sl\s+.*/e:false)"
+    | project TimeGenerated, Computer, AccountName, Activity = "Logging disabled by command", Details = CommandLine;
+union AuditRemoved, AgentStopped, DisableCommands
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    EventCount = count(),
+    Activities = make_set(Activity, 10),
+    Details = make_set(Details, 10),
+    Accounts = make_set(AccountName, 10)
+    by Computer

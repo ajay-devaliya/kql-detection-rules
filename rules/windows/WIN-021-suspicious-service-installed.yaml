@@ -1,0 +1,64 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1021
+name: Windows - Suspicious service installed
+description: |
+  Detects new services (System Event ID 7045) whose binary path runs a shell or script host, points to a user-writable folder, uses %COMSPEC%, or matches remote-execution tools such as PsExec (PSEXESVC). Attackers install services for persistence and to run code as SYSTEM.
+severity: High
+status: Available
+requiredDataConnectors: []
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Persistence
+- PrivilegeEscalation
+- Execution
+relevantTechniques:
+- T1543
+- T1569
+- T1543.003
+- T1569.002
+query: |
+  let lookback = 1h;
+  Event
+  | where TimeGenerated > ago(lookback)
+  | where EventLog == "System" and Source == "Service Control Manager" and EventID == 7045
+  | extend X = parse_xml(EventData)
+  | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+  | extend ServiceName = tostring(Props.ServiceName), ImagePath = tostring(Props.ImagePath),
+           StartType = tostring(Props.StartType), ServiceAccount = tostring(Props.AccountName)
+  | where ImagePath matches regex @"(?i)(cmd(\.exe)?\s+/c|powershell|pwsh|mshta|rundll32|regsvr32|wscript|cscript|%comspec%|\\users\\public\\|\\appdata\\|\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.exe|psexesvc|paexec|remcom|\\\\127\.0\.0\.1\\)"
+      or ServiceName matches regex @"(?i)^(psexesvc|paexec|remcomsvc|btobto)"
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Services = make_set(ServiceName, 10),
+      ImagePaths = make_set(ImagePath, 10),
+      ServiceAccounts = make_set(ServiceAccount, 5)
+      by Computer, AccountName = UserName
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+customDetails:
+  Services: Services
+  ImagePaths: ImagePaths
+  ServiceAccounts: ServiceAccounts
+alertDetailsOverride:
+  alertDisplayNameFormat: Suspicious service installed on {{Computer}}
+  alertDescriptionFormat: A service with a suspicious binary path was installed on {{Computer}}.
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

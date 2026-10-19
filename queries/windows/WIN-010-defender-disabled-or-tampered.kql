@@ -1,0 +1,54 @@
+// WIN-010 | Windows - Microsoft Defender disabled, stopped or exclusions added
+// Severity: High | Scheduled: every 15m, looking back 15m
+// MITRE ATT&CK: DefenseEvasion | T1562, T1562.001
+// Table(s): SecurityEvent, Event
+
+let lookback = 15m;
+let RiskySettings = dynamic(["Exclusions", "DisableRealtimeMonitoring", "DisableBehaviorMonitoring", "DisableIOAVProtection",
+    "DisableAntiSpyware", "DisableAntiVirus", "TamperProtection", "DisableScriptScanning", "DisableBlockAtFirstSeen"]);
+let DefenderEvents = Event
+    | where TimeGenerated > ago(lookback)
+    | where EventLog == "Microsoft-Windows-Windows Defender/Operational"
+    | where EventID in (5001, 5010, 5012) or (EventID == 5007 and RenderedDescription has_any (RiskySettings))
+    | extend Activity = case(
+        EventID == 5001, "Real-time protection disabled",
+        EventID == 5010, "Antispyware scanning disabled",
+        EventID == 5012, "Antivirus scanning disabled",
+        "Security-relevant configuration changed")
+    | project TimeGenerated, Computer, AccountName = UserName, Activity, Details = RenderedDescription;
+let ServiceStopped = Event
+    | where TimeGenerated > ago(lookback)
+    | where EventLog == "System" and EventID == 7036
+    | where RenderedDescription has_any ("Microsoft Defender Antivirus Service", "Windows Defender Antivirus Service", "Microsoft Defender Antivirus Network Inspection Service")
+        and RenderedDescription has "stopped"
+    | project TimeGenerated, Computer, AccountName = UserName, Activity = "Defender service stopped", Details = RenderedDescription;
+let ProcessEvents = union
+    (SecurityEvent
+        | where TimeGenerated > ago(lookback)
+        | where EventID == 4688
+        | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+            ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+    (Event
+        | where TimeGenerated > ago(lookback)
+        | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+        | extend X = parse_xml(EventData)
+        | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+        | extend U = split(tostring(Props.User), "\\")
+        | project TimeGenerated, Computer,
+            AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+            ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+            CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+             ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+let TamperCommands = ProcessEvents
+    | where CommandLine matches regex @"(?i)(set-mppreference.*-disable|add-mppreference.*-exclusion|sc(\.exe)?\s+(stop|config|delete)\s+windefend|disableantispyware|disablerealtimemonitoring|uninstall-windowsfeature.*defender|mpcmdrun.*-removedefinitions)"
+    | project TimeGenerated, Computer, AccountName, Activity = "Defender tampering command", Details = CommandLine;
+union DefenderEvents, ServiceStopped, TamperCommands
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    EventCount = count(),
+    Activities = make_set(Activity, 10),
+    Details = make_set(Details, 10),
+    Accounts = make_set(AccountName, 10)
+    by Computer

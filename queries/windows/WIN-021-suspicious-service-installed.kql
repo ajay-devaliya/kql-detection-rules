@@ -1,0 +1,22 @@
+// WIN-021 | Windows - Suspicious service installed
+// Severity: High | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: Persistence, PrivilegeEscalation, Execution | T1543, T1569, T1543.003, T1569.002
+// Table(s): Event
+
+let lookback = 1h;
+Event
+| where TimeGenerated > ago(lookback)
+| where EventLog == "System" and Source == "Service Control Manager" and EventID == 7045
+| extend X = parse_xml(EventData)
+| mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+| extend ServiceName = tostring(Props.ServiceName), ImagePath = tostring(Props.ImagePath),
+         StartType = tostring(Props.StartType), ServiceAccount = tostring(Props.AccountName)
+| where ImagePath matches regex @"(?i)(cmd(\.exe)?\s+/c|powershell|pwsh|mshta|rundll32|regsvr32|wscript|cscript|%comspec%|\\users\\public\\|\\appdata\\|\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.exe|psexesvc|paexec|remcom|\\\\127\.0\.0\.1\\)"
+    or ServiceName matches regex @"(?i)^(psexesvc|paexec|remcomsvc|btobto)"
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Services = make_set(ServiceName, 10),
+    ImagePaths = make_set(ImagePath, 10),
+    ServiceAccounts = make_set(ServiceAccount, 5)
+    by Computer, AccountName = UserName

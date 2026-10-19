@@ -1,0 +1,94 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1009
+name: Windows - Chain of discovery commands from one user (whoami, net, nltest, ipconfig...)
+description: |
+  Detects the same user running 4 or more different reconnaissance tools on one host within 15 minutes, for example whoami, net user, nltest, ipconfig, systeminfo and quser run through cmd.exe or PowerShell. Attackers run this chain right after gaining access to learn who they are and what is around them.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Discovery
+relevantTechniques:
+- T1087
+- T1016
+- T1082
+- T1033
+- T1069
+query: |
+  let lookback = 1h;
+  let ToolThreshold = 4;
+  let ReconTools = dynamic(["whoami.exe", "net.exe", "net1.exe", "nltest.exe", "ipconfig.exe", "systeminfo.exe", "tasklist.exe",
+      "quser.exe", "query.exe", "qwinsta.exe", "arp.exe", "route.exe", "netstat.exe", "nslookup.exe", "hostname.exe",
+      "dsquery.exe", "wmic.exe", "klist.exe", "cmdkey.exe", "getmac.exe"]);
+  let ProcessEvents = union
+      (SecurityEvent
+          | where TimeGenerated > ago(lookback)
+          | where EventID == 4688
+          | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+              ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+      (Event
+          | where TimeGenerated > ago(lookback)
+          | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+          | extend X = parse_xml(EventData)
+          | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+          | extend U = split(tostring(Props.User), "\\")
+          | project TimeGenerated, Computer,
+              AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+              ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+              CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+      | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+               ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+  ProcessEvents
+  | where ProcessFile in (ReconTools)
+  | where AccountName !endswith "$"
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      DistinctTools = dcount(ProcessFile),
+      Tools = make_set(ProcessFile, 20),
+      CommandLines = make_set(CommandLine, 20),
+      ParentProcesses = make_set(ParentProcessName, 10)
+      by Computer, AccountName, AccountDomain, Window = bin(TimeGenerated, 15m)
+  | where DistinctTools >= ToolThreshold
+  | project-away Window
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  DistinctTools: DistinctTools
+  Tools: Tools
+  CommandLines: CommandLines
+alertDetailsOverride:
+  alertDisplayNameFormat: Discovery command chain by {{AccountName}} on {{Computer}}
+  alertDescriptionFormat: '{{AccountName}} ran {{DistinctTools}} different reconnaissance tools on {{Computer}} within 15 minutes.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

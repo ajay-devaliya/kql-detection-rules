@@ -1,0 +1,44 @@
+// WIN-011 | Windows - Security or System event log cleared
+// Severity: High | Scheduled: every 15m, looking back 15m
+// MITRE ATT&CK: DefenseEvasion | T1070, T1070.001
+// Table(s): SecurityEvent, Event
+
+let lookback = 15m;
+let SecurityCleared = SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 1102
+    | project TimeGenerated, Computer, AccountName = coalesce(SubjectUserName, Account), Activity = "Security log cleared (1102)", Details = Activity;
+let SystemCleared = Event
+    | where TimeGenerated > ago(lookback)
+    | where EventLog == "System" and EventID == 104
+    | project TimeGenerated, Computer, AccountName = UserName, Activity = "Event log cleared (104)", Details = RenderedDescription;
+let ProcessEvents = union
+    (SecurityEvent
+        | where TimeGenerated > ago(lookback)
+        | where EventID == 4688
+        | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+            ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+    (Event
+        | where TimeGenerated > ago(lookback)
+        | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+        | extend X = parse_xml(EventData)
+        | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+        | extend U = split(tostring(Props.User), "\\")
+        | project TimeGenerated, Computer,
+            AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+            ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+            CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+             ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+let ClearCommands = ProcessEvents
+    | where CommandLine matches regex @"(?i)(wevtutil(\.exe)?\s+(cl|clear-log)\s|clear-eventlog|remove-eventlog|\[system\.diagnostics\.eventing\.reader\.eventlogsession\]::globalsession\.clearlog)"
+    | project TimeGenerated, Computer, AccountName, Activity = "Log clearing command", Details = CommandLine;
+union SecurityCleared, SystemCleared, ClearCommands
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    EventCount = count(),
+    Activities = make_set(Activity, 10),
+    Details = make_set(Details, 10),
+    Accounts = make_set(AccountName, 10)
+    by Computer

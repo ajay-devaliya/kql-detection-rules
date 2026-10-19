@@ -1,0 +1,39 @@
+// WIN-008 | Windows - Suspicious PowerShell command line (encoded, download cradle, AMSI bypass)
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: Execution, DefenseEvasion | T1059, T1027, T1105, T1059.001
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let MinIndicators = 2;
+let ProcessEvents = union
+    (SecurityEvent
+        | where TimeGenerated > ago(lookback)
+        | where EventID == 4688
+        | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+            ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+    (Event
+        | where TimeGenerated > ago(lookback)
+        | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+        | extend X = parse_xml(EventData)
+        | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+        | extend U = split(tostring(Props.User), "\\")
+        | project TimeGenerated, Computer,
+            AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+            ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+            CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+             ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+ProcessEvents
+| where ProcessFile in ("powershell.exe", "pwsh.exe", "powershell_ise.exe") or OriginalFileName =~ "PowerShell.EXE"
+| extend Indicators = extract_all(@"(?i)(encodedcommand|\s-e(nc?)?\s|\s-w(indowstyle)?\s+h(idden)?|-ep\s+bypass|executionpolicy\s+bypass|downloadstring|downloadfile|downloaddata|invoke-webrequest|\biwr\b|start-bitstransfer|net\.webclient|\biex\b|invoke-expression|frombase64string|reflection\.assembly|amsiutils|amsiinitfailed|-noprofile|\s-nop\s)", CommandLine)
+| extend IndicatorCount = array_length(set_union(Indicators, dynamic([])))
+| where IndicatorCount >= MinIndicators
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Executions = count(),
+    MaxIndicators = max(IndicatorCount),
+    MatchedIndicators = make_set(Indicators, 20),
+    CommandLines = make_set(CommandLine, 10),
+    ParentProcesses = make_set(ParentProcessName, 10)
+    by Computer, AccountName, AccountDomain

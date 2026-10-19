@@ -1,0 +1,87 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1005
+name: Windows - RDP or network logon attempt from a threat-intelligence IP
+description: |
+  Detects any successful or failed RDP / network logon (Event IDs 4624 and 4625, logon types 3 and 10) where the source IP is an active indicator in Microsoft Sentinel threat intelligence. A successful logon from a known-malicious IP is a likely compromise.
+severity: High
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: ThreatIntelligence
+  dataTypes:
+  - ThreatIntelIndicators
+- connectorId: ThreatIntelligenceTaxii
+  dataTypes:
+  - ThreatIntelIndicators
+queryFrequency: 1h
+queryPeriod: 14d
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- InitialAccess
+- CredentialAccess
+relevantTechniques:
+- T1133
+- T1110
+- T1078
+query: |
+  let dt_lookBack = 1h;
+  let ioc_lookBack = 14d;
+  let MaliciousIPs = ThreatIntelIndicators
+      | where TimeGenerated > ago(ioc_lookBack)
+      | where ObservableKey in ("ipv4-addr:value", "ipv6-addr:value", "network-traffic:src_ref.value", "network-traffic:dst_ref.value")
+      | summarize arg_max(TimeGenerated, *) by Id
+      | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())
+      | extend TI_Description = tostring(Data.description)
+      | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue
+      | project TI_IP, TI_Confidence = Confidence, TI_Description;
+  SecurityEvent
+  | where TimeGenerated > ago(dt_lookBack)
+  | where EventID in (4624, 4625) and LogonType in (3, 10)
+  | where isnotempty(IpAddress) and IpAddress !in ("-", "127.0.0.1", "::1")
+  | join kind=inner MaliciousIPs on $left.IpAddress == $right.TI_IP
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      FailedLogons = countif(EventID == 4625),
+      SuccessfulLogons = countif(EventID == 4624),
+      TargetAccounts = make_set(TargetUserName, 25),
+      LogonTypes = make_set(LogonType, 5)
+      by SourceIP = IpAddress, Computer, TI_Confidence, TI_Description
+  | extend Outcome = iff(SuccessfulLogons > 0, "Logon SUCCEEDED", "Failed only")
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+customDetails:
+  Outcome: Outcome
+  FailedLogons: FailedLogons
+  SuccessfulLogons: SuccessfulLogons
+  TargetAccounts: TargetAccounts
+  TIDescription: TI_Description
+alertDetailsOverride:
+  alertDisplayNameFormat: Logon attempt from malicious IP {{SourceIP}} to {{Computer}}
+  alertDescriptionFormat: 'Threat-intel IP {{SourceIP}} attempted to log on to {{Computer}}. Outcome: {{Outcome}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

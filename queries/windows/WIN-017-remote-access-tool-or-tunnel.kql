@@ -1,0 +1,39 @@
+// WIN-017 | Windows - Remote access tool or tunnelling tool executed (possible RAT)
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CommandAndControl | T1219, T1572
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let RemoteTools = dynamic(["anydesk.exe", "teamviewer.exe", "teamviewer_service.exe", "screenconnect.clientservice.exe",
+    "screenconnect.windowsclient.exe", "connectwisecontrol.client.exe", "ateraagent.exe", "splashtopstreamer.exe", "srservice.exe",
+    "rustdesk.exe", "client32.exe", "rserver3.exe", "radmin.exe", "ammyy_admin.exe", "aa_v3.exe", "ngrok.exe", "chisel.exe",
+    "plink.exe", "cloudflared.exe", "meshagent.exe", "tacticalrmm.exe", "simplehelp.exe", "remcos.exe"]);
+let ApprovedTools = dynamic([]);   // e.g. ["teamviewer.exe"] if your IT team uses it
+let ProcessEvents = union
+    (SecurityEvent
+        | where TimeGenerated > ago(lookback)
+        | where EventID == 4688
+        | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+            ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+    (Event
+        | where TimeGenerated > ago(lookback)
+        | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+        | extend X = parse_xml(EventData)
+        | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+        | extend U = split(tostring(Props.User), "\\")
+        | project TimeGenerated, Computer,
+            AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+            ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+            CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+    | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+             ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+ProcessEvents
+| where (ProcessFile in (RemoteTools) or tolower(OriginalFileName) in (RemoteTools)) and ProcessFile !in (ApprovedTools)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Executions = count(),
+    Tools = make_set(ProcessFile, 10),
+    Paths = make_set(ProcessName, 10),
+    CommandLines = make_set(CommandLine, 10)
+    by Computer, AccountName, AccountDomain

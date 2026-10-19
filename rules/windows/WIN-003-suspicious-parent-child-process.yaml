@@ -1,0 +1,93 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1003
+name: Windows - Office, browser or web server spawning a shell or script host
+description: |
+  Detects Office applications, PDF readers, browsers and web server processes starting command shells, script hosts or LOLBins. This is the classic pattern of a malicious document macro, a browser exploit or a web shell running commands.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Execution
+- InitialAccess
+- Persistence
+relevantTechniques:
+- T1059
+- T1204
+- T1505
+- T1204.002
+- T1505.003
+query: |
+  let lookback = 1h;
+  let SuspiciousParents = dynamic(["winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "msaccess.exe", "mspub.exe", "onenote.exe",
+      "acrord32.exe", "acrobat.exe", "w3wp.exe", "sqlservr.exe", "httpd.exe", "nginx.exe", "tomcat.exe", "tomcat9.exe", "php-cgi.exe"]);
+  let SuspiciousChildren = dynamic(["cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe",
+      "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "schtasks.exe", "whoami.exe", "net.exe", "net1.exe", "msbuild.exe", "installutil.exe"]);
+  let ProcessEvents = union
+      (SecurityEvent
+          | where TimeGenerated > ago(lookback)
+          | where EventID == 4688
+          | project TimeGenerated, Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName,
+              ProcessName = NewProcessName, OriginalFileName = "", CommandLine, ParentProcessName, EventSource = "Security 4688"),
+      (Event
+          | where TimeGenerated > ago(lookback)
+          | where Source == "Microsoft-Windows-Sysmon" and EventID == 1
+          | extend X = parse_xml(EventData)
+          | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+          | extend U = split(tostring(Props.User), "\\")
+          | project TimeGenerated, Computer,
+              AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), ""),
+              ProcessName = tostring(Props.Image), OriginalFileName = tostring(Props.OriginalFileName),
+              CommandLine = tostring(Props.CommandLine), ParentProcessName = tostring(Props.ParentImage), EventSource = "Sysmon 1")
+      | extend ProcessFile = tolower(tostring(split(ProcessName, "\\")[-1])),
+               ParentFile = tolower(tostring(split(ParentProcessName, "\\")[-1]));
+  ProcessEvents
+  | where ParentFile in (SuspiciousParents) and ProcessFile in (SuspiciousChildren)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Executions = count(),
+      CommandLines = make_set(CommandLine, 10),
+      ChildProcesses = make_set(ProcessFile, 10),
+      EventSources = make_set(EventSource, 2)
+      by Computer, AccountName, AccountDomain, ParentFile
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  ParentProcess: ParentFile
+  ChildProcesses: ChildProcesses
+  CommandLines: CommandLines
+alertDetailsOverride:
+  alertDisplayNameFormat: '{{ParentFile}} spawned a shell on {{Computer}}'
+  alertDescriptionFormat: '{{ParentFile}} started a command shell or script host on {{Computer}} as {{AccountName}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

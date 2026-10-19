@@ -1,0 +1,33 @@
+// WIN-016 | Windows - Outbound connection from a process in a suspicious folder or a LOLBin
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CommandAndControl | T1071, T1218
+// Table(s): Event
+
+let lookback = 1h;
+let RareNetworkBinaries = dynamic(["rundll32.exe", "regsvr32.exe", "mshta.exe", "wscript.exe", "cscript.exe", "msbuild.exe",
+    "installutil.exe", "certutil.exe", "regasm.exe", "regsvcs.exe", "cmstp.exe", "odbcconf.exe"]);
+let AllowedImages = dynamic([]);   // full paths of approved software that lives in AppData (Teams, Zoom, etc.)
+Event
+| where TimeGenerated > ago(lookback)
+| where Source == "Microsoft-Windows-Sysmon" and EventID == 3
+| extend X = parse_xml(EventData)
+| mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+| extend Image = tostring(Props.Image), DestinationIp = tostring(Props.DestinationIp), DestinationPort = toint(Props.DestinationPort),
+         DestinationHostname = tostring(Props.DestinationHostname), Initiated = tostring(Props.Initiated),
+         U = split(tostring(Props.User), "\\")
+| where Initiated =~ "true"
+| where isnotempty(DestinationIp) and not(ipv4_is_private(DestinationIp)) and DestinationIp !in ("127.0.0.1", "::1")
+| extend ImageFile = tolower(tostring(split(Image, "\\")[-1]))
+| where Image !in~ (AllowedImages)
+| where ImageFile in (RareNetworkBinaries)
+    or Image matches regex @"(?i)\\(users\\public|perflogs|windows\\temp|appdata\\local\\temp|downloads)\\"
+    or Image matches regex @"(?i)\\programdata\\[^\\]+\.exe$"
+| extend AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), "")
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Connections = count(),
+    DestinationIPs = make_set(DestinationIp, 20),
+    DestinationPorts = make_set(DestinationPort, 20),
+    DestinationHosts = make_set(DestinationHostname, 20)
+    by Computer, AccountName, AccountDomain, Image

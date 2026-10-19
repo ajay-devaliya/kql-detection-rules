@@ -1,0 +1,76 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1007
+name: Windows - Internal host brute forcing or password spraying other devices
+description: |
+  Detects one internal IP causing failed logons (Event ID 4625) on 5 or more different hosts, or against 10 or more different accounts, within an hour. This is how an attacker on a compromised machine guesses passwords across the network before moving laterally.
+severity: High
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CredentialAccess
+- LateralMovement
+relevantTechniques:
+- T1110
+- T1021
+- T1110.003
+query: |
+  let lookback = 1h;
+  let HostThreshold = 5;
+  let AccountThreshold = 10;
+  let ExcludedSources = dynamic([]);   // vulnerability scanners, NAC, monitoring servers
+  SecurityEvent
+  | where TimeGenerated > ago(lookback)
+  | where EventID == 4625
+  | where isnotempty(IpAddress) and IpAddress !in ("-", "127.0.0.1", "::1")
+  | where ipv4_is_private(IpAddress) and IpAddress !in (ExcludedSources)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      FailedAttempts = count(),
+      TargetHosts = dcount(Computer),
+      TargetHostList = make_set(Computer, 25),
+      TargetAccounts = dcount(TargetUserName),
+      TargetAccountList = make_set(TargetUserName, 25),
+      LogonTypes = make_set(LogonType, 5)
+      by SourceIP = IpAddress, SourceWorkstation = WorkstationName
+  | where TargetHosts >= HostThreshold or TargetAccounts >= AccountThreshold
+  | extend Pattern = case(
+      TargetHosts >= HostThreshold and TargetAccounts >= AccountThreshold, "Spray across many hosts and accounts",
+      TargetHosts >= HostThreshold, "Brute force across many hosts",
+      "Password spray across many accounts")
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+customDetails:
+  Pattern: Pattern
+  TargetHosts: TargetHosts
+  TargetAccounts: TargetAccounts
+  TargetHostList: TargetHostList
+alertDetailsOverride:
+  alertDisplayNameFormat: '{{Pattern}} from internal IP {{SourceIP}}'
+  alertDescriptionFormat: '{{SourceIP}} caused failed logons on {{TargetHosts}} hosts against {{TargetAccounts}} accounts within one hour.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

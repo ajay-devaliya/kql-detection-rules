@@ -1,0 +1,71 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1022
+name: Windows - Scheduled task created that runs a script host or a file from a suspicious folder
+description: |
+  Detects scheduled tasks created (Security Event ID 4698) whose action runs PowerShell, cmd, mshta, script hosts, rundll32 or regsvr32, downloads from a URL, or runs a file from a user-writable folder. Scheduled tasks are one of the most common persistence methods. Requires 'Audit Other Object Access Events'.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Persistence
+- Execution
+relevantTechniques:
+- T1053
+- T1053.005
+query: |
+  let lookback = 1h;
+  SecurityEvent
+  | where TimeGenerated > ago(lookback)
+  | where EventID == 4698
+  | extend X = parse_xml(EventData)
+  | mv-apply D = X.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+  | extend TaskName = tostring(Props.TaskName), TaskContent = tostring(Props.TaskContent)
+  | extend Command = extract(@"(?is)<Command>(.*?)</Command>", 1, TaskContent), Arguments = extract(@"(?is)<Arguments>(.*?)</Arguments>", 1, TaskContent)
+  | extend TaskAction = strcat(Command, " ", Arguments)
+  | where TaskAction matches regex @"(?i)(powershell|pwsh|cmd(\.exe)?\s+/c|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|https?://|\\users\\public\\|\\appdata\\|\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.(exe|dll|bat|ps1|vbs))"
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Tasks = make_set(TaskName, 10),
+      TaskActions = make_set(TaskAction, 10)
+      by Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  Tasks: Tasks
+  TaskActions: TaskActions
+alertDetailsOverride:
+  alertDisplayNameFormat: Suspicious scheduled task created on {{Computer}} by {{AccountName}}
+  alertDescriptionFormat: A scheduled task running a script host or a file from a suspicious folder was created on {{Computer}}.
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

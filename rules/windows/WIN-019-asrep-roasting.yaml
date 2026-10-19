@@ -1,0 +1,63 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1019
+name: 'Windows - AS-REP roasting: ticket issued without Kerberos pre-authentication'
+description: |
+  Detects Kerberos TGTs issued without pre-authentication (Event ID 4768 with PreAuthType 0). Accounts with 'Do not require Kerberos preauthentication' can be AS-REP roasted: an attacker requests their ticket and cracks the password offline. Every alert is also a reminder to fix that account setting.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CredentialAccess
+relevantTechniques:
+- T1558
+- T1558.004
+query: |
+  let lookback = 1h;
+  SecurityEvent
+  | where TimeGenerated > ago(lookback)
+  | where EventID == 4768 and PreAuthType == "0" and Status =~ "0x0"
+  | extend SourceIP = trim_start(@"::ffff:", IpAddress)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Requests = count(),
+      Accounts = make_set(TargetUserName, 25),
+      DistinctAccounts = dcount(TargetUserName),
+      EncryptionTypes = make_set(TicketEncryptionType, 5),
+      DomainControllers = make_set(Computer, 5)
+      by SourceIP
+entityMappings:
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+customDetails:
+  Accounts: Accounts
+  DistinctAccounts: DistinctAccounts
+  EncryptionTypes: EncryptionTypes
+alertDetailsOverride:
+  alertDisplayNameFormat: AS-REP roasting from {{SourceIP}} ({{DistinctAccounts}} accounts)
+  alertDescriptionFormat: Tickets without pre-authentication were issued to {{SourceIP}} for {{DistinctAccounts}} account(s).
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

@@ -1,0 +1,29 @@
+// WIN-005 | Windows - RDP or network logon attempt from a threat-intelligence IP
+// Severity: High | Scheduled: every 1h, looking back 14d
+// MITRE ATT&CK: InitialAccess, CredentialAccess | T1133, T1110, T1078
+// Table(s): SecurityEvent, Event, ThreatIntelIndicators
+
+let dt_lookBack = 1h;
+let ioc_lookBack = 14d;
+let MaliciousIPs = ThreatIntelIndicators
+    | where TimeGenerated > ago(ioc_lookBack)
+    | where ObservableKey in ("ipv4-addr:value", "ipv6-addr:value", "network-traffic:src_ref.value", "network-traffic:dst_ref.value")
+    | summarize arg_max(TimeGenerated, *) by Id
+    | where IsDeleted == false and (isnull(ValidUntil) or ValidUntil > now())
+    | extend TI_Description = tostring(Data.description)
+    | summarize arg_max(Confidence, TI_Description, Id) by TI_IP = ObservableValue
+    | project TI_IP, TI_Confidence = Confidence, TI_Description;
+SecurityEvent
+| where TimeGenerated > ago(dt_lookBack)
+| where EventID in (4624, 4625) and LogonType in (3, 10)
+| where isnotempty(IpAddress) and IpAddress !in ("-", "127.0.0.1", "::1")
+| join kind=inner MaliciousIPs on $left.IpAddress == $right.TI_IP
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    FailedLogons = countif(EventID == 4625),
+    SuccessfulLogons = countif(EventID == 4624),
+    TargetAccounts = make_set(TargetUserName, 25),
+    LogonTypes = make_set(LogonType, 5)
+    by SourceIP = IpAddress, Computer, TI_Confidence, TI_Description
+| extend Outcome = iff(SuccessfulLogons > 0, "Logon SUCCEEDED", "Failed only")

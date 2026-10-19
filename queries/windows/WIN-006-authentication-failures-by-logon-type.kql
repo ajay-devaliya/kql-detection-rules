@@ -1,0 +1,37 @@
+// WIN-006 | Windows - Repeated authentication failures by logon type (3, 4, 5, 10, 11)
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CredentialAccess | T1110, T1110.001
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let WatchedLogonTypes = dynamic([3, 4, 5, 10, 11]);
+let FailureThreshold = 20;
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4625 and LogonType in (WatchedLogonTypes)
+| extend LogonTypeName = case(
+    LogonType == 3, "3 - Network",
+    LogonType == 4, "4 - Batch",
+    LogonType == 5, "5 - Service",
+    LogonType == 10, "10 - RemoteInteractive (RDP)",
+    LogonType == 11, "11 - CachedInteractive",
+    tostring(LogonType))
+| extend FailureReason = case(
+    SubStatus =~ "0xC000006A", "Wrong password",
+    SubStatus =~ "0xC0000064", "User does not exist",
+    SubStatus =~ "0xC0000072", "Account disabled",
+    SubStatus =~ "0xC0000234", "Account locked out",
+    SubStatus =~ "0xC0000071", "Password expired",
+    SubStatus =~ "0xC000006F", "Outside allowed logon hours",
+    Status =~ "0xC000015B", "Logon type not granted",
+    strcat(Status, " / ", SubStatus))
+| extend SourceIP = iff(IpAddress in ("-", ""), "", IpAddress)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    FailedAttempts = count(),
+    DistinctAccounts = dcount(TargetUserName),
+    TargetAccounts = make_set(TargetUserName, 25),
+    FailureReasons = make_set(FailureReason, 10)
+    by Computer, LogonTypeName, SourceIP, SourceWorkstation = WorkstationName
+| where FailedAttempts >= FailureThreshold

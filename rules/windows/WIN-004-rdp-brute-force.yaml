@@ -1,0 +1,79 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1004
+name: Windows - RDP brute force (with success check)
+description: |
+  Detects 10 or more failed RDP logons (Event ID 4625, logon type 10) from one source IP to one host within an hour, and shows whether the same IP then logged on successfully (4624). A success after many failures means the password may have been guessed. Note: when Network Level Authentication is on, failed RDP logons are often recorded as logon type 3; WIN-006 covers those.
+severity: Medium
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CredentialAccess
+- InitialAccess
+relevantTechniques:
+- T1110
+- T1133
+- T1110.001
+query: |
+  let lookback = 1h;
+  let FailureThreshold = 10;
+  let Failures = SecurityEvent
+      | where TimeGenerated > ago(lookback)
+      | where EventID == 4625 and LogonType == 10
+      | where isnotempty(IpAddress) and IpAddress !in ("-", "127.0.0.1", "::1")
+      | summarize
+          StartTime = min(TimeGenerated),
+          EndTime = max(TimeGenerated),
+          FailedAttempts = count(),
+          DistinctAccounts = dcount(TargetUserName),
+          TargetAccounts = make_set(TargetUserName, 25)
+          by SourceIP = IpAddress, Computer
+      | where FailedAttempts >= FailureThreshold;
+  let Successes = SecurityEvent
+      | where TimeGenerated > ago(lookback)
+      | where EventID == 4624 and LogonType == 10
+      | summarize SuccessfulLogons = count(), SuccessAccounts = make_set(TargetUserName, 10), LastSuccess = max(TimeGenerated)
+          by SourceIP = IpAddress, Computer;
+  Failures
+  | join kind=leftouter Successes on SourceIP, Computer
+  | extend SuccessfulLogons = coalesce(SuccessfulLogons, 0)
+  | extend BruteForceSucceeded = iff(SuccessfulLogons > 0 and LastSuccess > StartTime, "Yes", "No")
+  | project StartTime, EndTime, SourceIP, Computer, FailedAttempts, DistinctAccounts, TargetAccounts, BruteForceSucceeded, SuccessfulLogons, SuccessAccounts
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+customDetails:
+  FailedAttempts: FailedAttempts
+  TargetAccounts: TargetAccounts
+  BruteForceSucceeded: BruteForceSucceeded
+alertDetailsOverride:
+  alertDisplayNameFormat: RDP brute force from {{SourceIP}} against {{Computer}}
+  alertDescriptionFormat: '{{FailedAttempts}} failed RDP logons from {{SourceIP}}. Successful logon afterwards: {{BruteForceSucceeded}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

@@ -1,0 +1,72 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1013
+name: Windows - Executable or script dropped by a script host, Office or LOLBin
+description: |
+  Detects executables, DLLs and scripts being written (Sysmon Event ID 11) by processes that should not normally drop them, such as PowerShell, cmd, script hosts, mshta, certutil, BITS or Office apps, and any file written into a Startup folder. Dropping a payload to disk is a common step after initial access.
+severity: Medium
+status: Available
+requiredDataConnectors: []
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Execution
+- Persistence
+- CommandAndControl
+relevantTechniques:
+- T1105
+- T1547
+- T1547.001
+query: |
+  let lookback = 1h;
+  let DroppingProcesses = dynamic(["powershell.exe", "pwsh.exe", "cmd.exe", "wscript.exe", "cscript.exe", "mshta.exe", "rundll32.exe",
+      "regsvr32.exe", "certutil.exe", "bitsadmin.exe", "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "msbuild.exe", "curl.exe"]);
+  Event
+  | where TimeGenerated > ago(lookback)
+  | where Source == "Microsoft-Windows-Sysmon" and EventID == 11
+  | extend X = parse_xml(EventData)
+  | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+  | extend Image = tostring(Props.Image), TargetFilename = tostring(Props.TargetFilename),
+           U = split(tostring(Props.User), "\\")
+  | extend ImageFile = tolower(tostring(split(Image, "\\")[-1]))
+  | where TargetFilename matches regex @"(?i)\.(exe|dll|scr|ps1|vbs|vbe|js|jse|hta|bat|cmd|lnk|iso|img|msi)$"
+  | where ImageFile in (DroppingProcesses) or TargetFilename matches regex @"(?i)\\start menu\\programs\\startup\\"
+  | extend AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), "")
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      FilesCreated = dcount(TargetFilename),
+      Files = make_set(TargetFilename, 20)
+      by Computer, AccountName, AccountDomain, CreatingProcess = Image
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  CreatingProcess: CreatingProcess
+  Files: Files
+  FilesCreated: FilesCreated
+alertDetailsOverride:
+  alertDisplayNameFormat: '{{CreatingProcess}} dropped executable files on {{Computer}}'
+  alertDescriptionFormat: '{{CreatingProcess}} created {{FilesCreated}} executable or script file(s) on {{Computer}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

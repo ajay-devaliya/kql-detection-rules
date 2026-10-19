@@ -1,0 +1,29 @@
+// WIN-007 | Windows - Internal host brute forcing or password spraying other devices
+// Severity: High | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CredentialAccess, LateralMovement | T1110, T1021, T1110.003
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let HostThreshold = 5;
+let AccountThreshold = 10;
+let ExcludedSources = dynamic([]);   // vulnerability scanners, NAC, monitoring servers
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4625
+| where isnotempty(IpAddress) and IpAddress !in ("-", "127.0.0.1", "::1")
+| where ipv4_is_private(IpAddress) and IpAddress !in (ExcludedSources)
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    FailedAttempts = count(),
+    TargetHosts = dcount(Computer),
+    TargetHostList = make_set(Computer, 25),
+    TargetAccounts = dcount(TargetUserName),
+    TargetAccountList = make_set(TargetUserName, 25),
+    LogonTypes = make_set(LogonType, 5)
+    by SourceIP = IpAddress, SourceWorkstation = WorkstationName
+| where TargetHosts >= HostThreshold or TargetAccounts >= AccountThreshold
+| extend Pattern = case(
+    TargetHosts >= HostThreshold and TargetAccounts >= AccountThreshold, "Spray across many hosts and accounts",
+    TargetHosts >= HostThreshold, "Brute force across many hosts",
+    "Password spray across many accounts")

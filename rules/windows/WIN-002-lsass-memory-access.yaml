@@ -1,0 +1,71 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1002
+name: Windows - Suspicious access to LSASS memory (credential dumping)
+description: |
+  Detects a process opening lsass.exe with access rights used for reading its memory (Sysmon Event ID 10), or with a call trace through dbghelp/dbgcore (MiniDumpWriteDump). This is how Mimikatz, ProcDump, comsvcs.dll MiniDump and similar tools steal credentials. Security products that legitimately read LSASS are excluded.
+severity: High
+status: Available
+requiredDataConnectors: []
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CredentialAccess
+relevantTechniques:
+- T1003
+- T1003.001
+query: |
+  let lookback = 1h;
+  let SuspiciousAccess = dynamic(["0x1010", "0x1410", "0x1438", "0x143a", "0x1fffff", "0x1f3fff", "0x1f1fff", "0x1f0fff"]);
+  let AllowedSources = dynamic(["msmpeng.exe", "mssense.exe", "wininit.exe", "csrss.exe", "svchost.exe", "wmiprvse.exe", "vmtoolsd.exe", "lsm.exe"]);   // add your EDR/AV agents
+  Event
+  | where TimeGenerated > ago(lookback)
+  | where Source == "Microsoft-Windows-Sysmon" and EventID == 10
+  | extend X = parse_xml(EventData)
+  | mv-apply D = X.DataItem.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+  | extend SourceImage = tostring(Props.SourceImage), TargetImage = tostring(Props.TargetImage),
+           GrantedAccess = tolower(tostring(Props.GrantedAccess)), CallTrace = tostring(Props.CallTrace),
+           U = split(tostring(Props.SourceUser), "\\")
+  | where TargetImage endswith "\\lsass.exe"
+  | where GrantedAccess in (SuspiciousAccess) or CallTrace has_any ("dbghelp.dll", "dbgcore.dll")
+  | extend SourceFile = tolower(tostring(split(SourceImage, "\\")[-1]))
+  | where SourceFile !in (AllowedSources)
+  | extend AccountName = tostring(U[-1]), AccountDomain = iff(array_length(U) > 1, tostring(U[0]), "")
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      AccessCount = count(),
+      GrantedAccessValues = make_set(GrantedAccess, 10),
+      SampleCallTrace = take_any(CallTrace)
+      by Computer, SourceImage, AccountName, AccountDomain
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  SourceImage: SourceImage
+  GrantedAccess: GrantedAccessValues
+alertDetailsOverride:
+  alertDisplayNameFormat: '{{SourceImage}} accessed LSASS memory on {{Computer}}'
+  alertDescriptionFormat: '{{SourceImage}} opened lsass.exe with credential-dumping access rights on {{Computer}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

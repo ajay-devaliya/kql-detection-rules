@@ -1,0 +1,72 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1018
+name: 'Windows - Kerberoasting: RC4 service tickets requested for several services'
+description: |
+  Detects one account requesting RC4-encrypted (0x17) Kerberos service tickets (Event ID 4769) for 3 or more different service accounts within an hour. Attackers request these tickets to crack service-account passwords offline. Machine accounts and krbtgt are excluded. Runs on domain controllers.
+severity: High
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- CredentialAccess
+relevantTechniques:
+- T1558
+- T1558.003
+query: |
+  let lookback = 1h;
+  let ServiceThreshold = 3;
+  SecurityEvent
+  | where TimeGenerated > ago(lookback)
+  | where EventID == 4769
+  | where TicketEncryptionType =~ "0x17" and Status =~ "0x0"
+  | where ServiceName !endswith "$" and ServiceName !~ "krbtgt"
+  | extend SourceIP = trim_start(@"::ffff:", IpAddress)
+  | extend AccountName = tostring(split(TargetUserName, "@")[0]), AccountDomain = TargetDomainName
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      TicketRequests = count(),
+      DistinctServices = dcount(ServiceName),
+      Services = make_set(ServiceName, 25),
+      DomainControllers = make_set(Computer, 5)
+      by AccountName, AccountDomain, SourceIP
+  | where DistinctServices >= ServiceThreshold
+entityMappings:
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+- entityType: IP
+  fieldMappings:
+  - identifier: Address
+    columnName: SourceIP
+customDetails:
+  DistinctServices: DistinctServices
+  Services: Services
+alertDetailsOverride:
+  alertDisplayNameFormat: Possible Kerberoasting by {{AccountName}} from {{SourceIP}}
+  alertDescriptionFormat: '{{AccountName}} requested RC4 service tickets for {{DistinctServices}} services within one hour.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

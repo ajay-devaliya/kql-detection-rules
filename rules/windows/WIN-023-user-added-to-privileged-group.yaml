@@ -1,0 +1,71 @@
+id: 5d7a3f1e-0b1c-4e0e-9a51-2f0f6a7c1023
+name: Windows - Account added to a privileged group
+description: |
+  Detects accounts being added to Administrators, Domain Admins, Enterprise Admins, Schema Admins, Account/Backup/Server Operators, DnsAdmins, Group Policy Creator Owners or Remote Desktop Users (Event IDs 4728, 4732, 4756). Attackers add themselves to these groups to keep admin access.
+severity: High
+status: Available
+requiredDataConnectors:
+- connectorId: SecurityEvents
+  dataTypes:
+  - SecurityEvent
+- connectorId: WindowsSecurityEvents
+  dataTypes:
+  - SecurityEvent
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+- Persistence
+- PrivilegeEscalation
+relevantTechniques:
+- T1098
+- T1098.007
+query: |
+  let lookback = 15m;
+  let PrivilegedGroups = dynamic(["Administrators", "Domain Admins", "Enterprise Admins", "Schema Admins", "Account Operators",
+      "Backup Operators", "Server Operators", "Print Operators", "DnsAdmins", "Group Policy Creator Owners", "Remote Desktop Users",
+      "Enterprise Key Admins", "Key Admins"]);
+  SecurityEvent
+  | where TimeGenerated > ago(lookback)
+  | where EventID in (4728, 4732, 4756)
+  | where TargetUserName in~ (PrivilegedGroups)
+  | extend AddedMember = iff(isnotempty(MemberName) and MemberName != "-", MemberName, MemberSid)
+  | summarize
+      StartTime = min(TimeGenerated),
+      EndTime = max(TimeGenerated),
+      Changes = count(),
+      AddedMembers = make_set(AddedMember, 10),
+      Groups = make_set(TargetUserName, 10)
+      by Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName
+entityMappings:
+- entityType: Host
+  fieldMappings:
+  - identifier: FullName
+    columnName: Computer
+- entityType: Account
+  fieldMappings:
+  - identifier: Name
+    columnName: AccountName
+  - identifier: NTDomain
+    columnName: AccountDomain
+customDetails:
+  Groups: Groups
+  AddedMembers: AddedMembers
+alertDetailsOverride:
+  alertDisplayNameFormat: '{{AccountName}} added a member to a privileged group on {{Computer}}'
+  alertDescriptionFormat: '{{AccountName}} added an account to a privileged group on {{Computer}}.'
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled
+metadata:
+  source:
+    kind: Community
+  author:
+    name: Ajay Devaliya
+  support:
+    tier: Community
+  categories:
+    domains:
+    - Security - Threat Protection

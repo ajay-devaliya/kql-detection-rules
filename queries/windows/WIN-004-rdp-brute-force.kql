@@ -1,0 +1,29 @@
+// WIN-004 | Windows - RDP brute force (with success check)
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CredentialAccess, InitialAccess | T1110, T1133, T1110.001
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let FailureThreshold = 10;
+let Failures = SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4625 and LogonType == 10
+    | where isnotempty(IpAddress) and IpAddress !in ("-", "127.0.0.1", "::1")
+    | summarize
+        StartTime = min(TimeGenerated),
+        EndTime = max(TimeGenerated),
+        FailedAttempts = count(),
+        DistinctAccounts = dcount(TargetUserName),
+        TargetAccounts = make_set(TargetUserName, 25)
+        by SourceIP = IpAddress, Computer
+    | where FailedAttempts >= FailureThreshold;
+let Successes = SecurityEvent
+    | where TimeGenerated > ago(lookback)
+    | where EventID == 4624 and LogonType == 10
+    | summarize SuccessfulLogons = count(), SuccessAccounts = make_set(TargetUserName, 10), LastSuccess = max(TimeGenerated)
+        by SourceIP = IpAddress, Computer;
+Failures
+| join kind=leftouter Successes on SourceIP, Computer
+| extend SuccessfulLogons = coalesce(SuccessfulLogons, 0)
+| extend BruteForceSucceeded = iff(SuccessfulLogons > 0 and LastSuccess > StartTime, "Yes", "No")
+| project StartTime, EndTime, SourceIP, Computer, FailedAttempts, DistinctAccounts, TargetAccounts, BruteForceSucceeded, SuccessfulLogons, SuccessAccounts

@@ -1,0 +1,21 @@
+// WIN-022 | Windows - Scheduled task created that runs a script host or a file from a suspicious folder
+// Severity: Medium | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: Persistence, Execution | T1053, T1053.005
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4698
+| extend X = parse_xml(EventData)
+| mv-apply D = X.EventData.Data on (summarize Props = make_bag(bag_pack(tostring(D["@Name"]), tostring(D["#text"]))))
+| extend TaskName = tostring(Props.TaskName), TaskContent = tostring(Props.TaskContent)
+| extend Command = extract(@"(?is)<Command>(.*?)</Command>", 1, TaskContent), Arguments = extract(@"(?is)<Arguments>(.*?)</Arguments>", 1, TaskContent)
+| extend TaskAction = strcat(Command, " ", Arguments)
+| where TaskAction matches regex @"(?i)(powershell|pwsh|cmd(\.exe)?\s+/c|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|https?://|\\users\\public\\|\\appdata\\|\\temp\\|\\perflogs\\|\\programdata\\[^\\]+\.(exe|dll|bat|ps1|vbs))"
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    Tasks = make_set(TaskName, 10),
+    TaskActions = make_set(TaskAction, 10)
+    by Computer, AccountName = SubjectUserName, AccountDomain = SubjectDomainName

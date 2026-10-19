@@ -1,0 +1,23 @@
+// WIN-018 | Windows - Kerberoasting: RC4 service tickets requested for several services
+// Severity: High | Scheduled: every 1h, looking back 1h
+// MITRE ATT&CK: CredentialAccess | T1558, T1558.003
+// Table(s): SecurityEvent, Event
+
+let lookback = 1h;
+let ServiceThreshold = 3;
+SecurityEvent
+| where TimeGenerated > ago(lookback)
+| where EventID == 4769
+| where TicketEncryptionType =~ "0x17" and Status =~ "0x0"
+| where ServiceName !endswith "$" and ServiceName !~ "krbtgt"
+| extend SourceIP = trim_start(@"::ffff:", IpAddress)
+| extend AccountName = tostring(split(TargetUserName, "@")[0]), AccountDomain = TargetDomainName
+| summarize
+    StartTime = min(TimeGenerated),
+    EndTime = max(TimeGenerated),
+    TicketRequests = count(),
+    DistinctServices = dcount(ServiceName),
+    Services = make_set(ServiceName, 25),
+    DomainControllers = make_set(Computer, 5)
+    by AccountName, AccountDomain, SourceIP
+| where DistinctServices >= ServiceThreshold
